@@ -1,0 +1,9 @@
+# Experiment-only dependencies. NOT needed to run the dashboard, and deliberately
+# kept out of requirements.txt: the server has to fit Render's 512 MB free tier,
+# and scikit-learn plus scipy add roughly 100 MB for code that never runs in a
+# request.
+#
+#   .venv/bin/pip install -r requirements-dev.txt
+#   .venv/bin/python forecast_experiment.py
+scikit-learn==1.9.0
+scipy==1.18.1

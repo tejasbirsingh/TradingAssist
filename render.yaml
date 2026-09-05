@@ -1,0 +1,81 @@
+# Render Blueprint. Import this from the dashboard instead of filling the form
+# by hand: Dashboard -> New -> Blueprint -> pick the repo.
+#
+# Deliberately one web service and nothing else. The app serves its own static
+# page, so the browser and the API share an origin and no CORS setup is needed.
+#
+# Validate before creating anything, which also answers whether `plan: free` is
+# offered in this region:
+#   render blueprints validate render.yaml
+services:
+  - type: web
+    name: trading-assist
+    runtime: python
+    plan: free
+
+    # Immutable once the service exists, and the default is `oregon`. Every call
+    # this app makes goes to Breeze and NSE in India, so cross the Pacific once at
+    # deploy time rather than on every request. If free instances turn out not to
+    # be offered here, `render blueprints validate` says so before provisioning.
+    region: singapore
+
+    buildCommand: pip install -r requirements.txt
+
+    # Render assigns the port; binding 127.0.0.1 as we do locally would make the
+    # service unreachable. One worker only: the Breeze client, credentials and
+    # tick feed are module-level state, so a second worker would hold its own
+    # empty copy and serve blank data on half the requests.
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT --workers 1
+
+    # Must answer 2xx without credentials, and it does: /api/config is in
+    # auth.py's OPEN_PATHS. A gated health path would return 401, which Render
+    # counts as unhealthy, and the deploy would be cancelled after 15 minutes.
+    # It also touches no Breeze session and calls no note_activity().
+    healthCheckPath: /api/config
+
+    # Replaces the deprecated `autoDeploy: false`. Note this governs only
+    # commit-triggered *service* deploys -- the Blueprint's own Auto Sync is a
+    # separate dashboard setting that defaults to on.
+    # Quoted: bare `off` is a YAML 1.1 boolean and parses as False, not "off".
+    autoDeployTrigger: "off"
+
+    envVars:
+      # The server-side gate. Without a password every endpoint is public --
+      # including POST /api/credentials, which would let anyone overwrite the
+      # order-capable Breeze keys. `sync: false` makes Render prompt for the
+      # value on first deploy instead of keeping it in this file.
+      #
+      # WARNING: sync:false values are prompted ONLY when the Blueprint is first
+      # created. On a later update Render ignores them, and they have to be typed
+      # into the dashboard by hand -- so everything secret belongs here now.
+      - key: AUTH_USER
+        sync: false
+      - key: AUTH_PASSWORD
+        sync: false
+
+      # Telegram is the only off-device channel that works here: the free tier
+      # blocks outbound ports 25/465/587, so every SMTP_* setting is inert and
+      # email cannot connect at all.
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+
+      # firebase-web-config.json is gitignored and firebase_config.py reads it
+      # from disk only, so Firebase is unconfigured on Render. With the default
+      # REQUIRE_LOGIN=true the page renders a dead "sign-in required but Firebase
+      # is not configured" gate while the deploy still reports healthy. auth.py's
+      # HTTP Basic gate is the real security boundary here anyway.
+      - key: REQUIRE_LOGIN
+        value: "false"
+
+      # alerts.py stamps triggered_at with a naive datetime.now(). On a UTC host
+      # those stamps would sit 5h30m behind the IST times shown everywhere else,
+      # and the page-load freshness check would treat a fresh trip as stale and
+      # skip announcing it.
+      - key: TZ
+        value: Asia/Kolkata
+
+# Python version is pinned in `.python-version` rather than a PYTHON_VERSION env
+# var here. The env var would take precedence but requires a fully qualified
+# X.Y.Z, and the bare "3.13" that used to sit here is not a valid value for it.
