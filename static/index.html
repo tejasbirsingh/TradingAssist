@@ -1,0 +1,1897 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trading Assist</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --line: #262b36;
+    --text: #e6e9ef; --muted: #8b93a4;
+    --up: #3fb950; --down: #f85149; --flat: #d29922; --none: #6e7681;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
+  }
+  /* Wide enough for two stock cards side by side; a 940px page left each card
+     too narrow for the indicator table to read well. */
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 28px 20px 60px; }
+  .wrap[hidden] { display: none; }
+
+  /* Sign-in gate. Nothing is fetched until it is dismissed. */
+  .gate {
+    position: fixed; inset: 0; z-index: 100; background: var(--bg);
+    display: flex; align-items: center; justify-content: center; padding: 24px;
+  }
+  .gate[hidden] { display: none; }
+  .gatebox {
+    width: min(400px, 100%); padding: 30px 28px; text-align: center;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  }
+  .gatebox h1 { font-size: 20px; margin: 0 0 8px; }
+  .gatesub { color: var(--muted); font-size: 13px; line-height: 1.6; margin: 0 0 20px; }
+  .gatebtn {
+    display: inline-flex; align-items: center; gap: 10px;
+    padding: 10px 18px; border-radius: 8px; cursor: pointer;
+    border: 1px solid #3d4657; background: #22293a; color: var(--text);
+    font: inherit; font-size: 14px; font-weight: 550;
+  }
+  .gatebtn:hover, .gatebtn:focus-visible {
+    border-color: #5a7fa8; background: #12202b; outline: none;
+  }
+  .gatebtn:disabled { opacity: .5; cursor: default; }
+  .gatebox .sessmsg { text-align: left; }
+  .spinner {
+    width: 26px; height: 26px; margin: 0 auto 14px;
+    border: 2.5px solid #2b3242; border-top-color: #5a7fa8;
+    border-radius: 50%; animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  h1 { font-size: 19px; margin: 0 0 2px; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 13px; }
+
+  /* Header with the account control pinned top-right. */
+  .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+  .acctwrap { position: relative; flex: none; }
+  .accticon {
+    position: relative; width: 38px; height: 38px; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 1px solid var(--line); background: var(--panel); color: var(--muted);
+    cursor: pointer; padding: 0;
+  }
+  .accticon:hover, .accticon:focus-visible, .accticon[aria-expanded="true"] {
+    color: var(--text); border-color: #3d4657; background: #22293a; outline: none;
+  }
+  .accticon svg { width: 20px; height: 20px; }
+  .accticon .dot {
+    position: absolute; right: -1px; bottom: -1px; width: 11px; height: 11px;
+    border: 2px solid var(--bg);
+  }
+  .acctpanel {
+    position: absolute; right: 0; top: calc(100% + 10px); z-index: 40;
+    width: min(430px, calc(100vw - 40px)); padding: 0 15px 14px;
+    background: var(--panel); border: 1px solid #3d4657; border-radius: 10px;
+    box-shadow: 0 14px 36px #000c; font-size: 13px; text-align: left;
+  }
+  .acctpanel[hidden] { display: none; }
+  .acctpanel .sessbody { border-top: none; padding: 0; }
+  .acctstatus {
+    padding: 11px 0 10px; margin-bottom: 2px; color: var(--muted);
+    border-bottom: 1px solid var(--line);
+  }
+  @media (max-width: 560px) {
+    .acctpanel { position: fixed; right: 12px; left: 12px; width: auto; top: 76px; }
+  }
+
+  .banner {
+    margin: 18px 0 16px; padding: 9px 13px; border-radius: 8px; font-size: 13px;
+    background: var(--panel); border: 1px solid var(--line); color: var(--muted);
+  }
+  .banner.open { color: var(--up); border-color: #1f6f2f; }
+
+  /* Modal shown on any tab when an alert trips, so it depends on neither the
+     browser's notification permission nor the Alerts tab being open.
+     Deliberately sets no `display` on the dialog itself: the browser toggles
+     that to open and close it, and an author rule would override the UA's
+     `dialog:not([open]) { display: none }` and leave it permanently on screen --
+     the same trap that once left an empty red bar behind. */
+  #fireDialog {
+    padding: 0; border-radius: 10px; border: 1px solid #8b2a26;
+    background: var(--panel); color: var(--text);
+    max-width: 440px; width: calc(100% - 40px);
+  }
+  #fireDialog::backdrop { background: rgba(0, 0, 0, 0.62); }
+  .firedlg { padding: 18px 20px; }
+  .firedlg h3 { margin: 0 0 12px; font-size: 15px; color: var(--down); }
+  .firedlg .firelist { display: grid; gap: 7px; font-size: 13px; }
+  .firedlg b { font-weight: 650; }
+  .firedlg .when { color: var(--muted); margin-left: 6px; font-size: 12px; }
+  .firedlg .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+  .firedlg button {
+    padding: 5px 12px; border-radius: 6px; border: 1px solid #4a5468;
+    background: transparent; color: var(--muted); font: inherit; font-size: 12px;
+    cursor: pointer;
+  }
+  .firedlg button:hover { color: var(--text); border-color: #5a7fa8; }
+  .firedlg button#fireClose { border-color: #8b2a26; color: var(--down); }
+  .firedlg button#fireClose:hover { background: #3a1a18; color: var(--text); }
+  .livepill {
+    display: inline-flex; align-items: center; gap: 6px; margin-right: 9px;
+    padding: 1px 8px 1px 6px; border-radius: 10px; font-size: 11px;
+    font-weight: 700; letter-spacing: .05em;
+    color: var(--up); background: #10251633; border: 1px solid #1f6f2f;
+  }
+  .livedot {
+    width: 6px; height: 6px; border-radius: 50%; background: var(--up);
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+
+  /* Section tabs. */
+  .tabbar {
+    display: flex; gap: 4px; margin-bottom: 18px;
+    border-bottom: 1px solid var(--line);
+  }
+  .tabbar button {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: none; border: none; border-bottom: 2px solid transparent;
+    color: var(--muted); font: inherit; font-size: 14px; font-weight: 550;
+    padding: 9px 15px; margin-bottom: -1px; cursor: pointer;
+  }
+  .tabbar button:hover { color: var(--text); }
+  .tabbar button:focus-visible { outline: none; color: var(--text); background: #1b1f28; }
+  .tabbar button[aria-selected="true"] {
+    color: var(--text); border-bottom-color: #5a7fa8;
+  }
+  .tabdot { width: 7px; height: 7px; border-radius: 50%; background: transparent; }
+  .tabdot.ok { background: var(--up); }
+  .tabdot.bad { background: var(--down); }
+  .tabcount {
+    padding: 1px 7px; border-radius: 10px; font-size: 11px; font-weight: 700;
+    background: #10251633; border: 1px solid #1f6f2f; color: var(--up);
+  }
+  [role="tabpanel"][hidden] { display: none; }
+
+  /* Timeframe selector inside the Stocks tab. */
+  .tfbar { display: flex; gap: 6px; margin-bottom: 16px; }
+  .tfbar button {
+    background: var(--panel); color: var(--muted); border: 1px solid var(--line);
+    padding: 7px 13px; border-radius: 7px; cursor: pointer; font-size: 13px;
+    font-family: inherit;
+  }
+  .tfbar button:hover { color: var(--text); }
+  .tfbar button[aria-pressed="true"] {
+    background: #22293a; color: var(--text); border-color: #3d4657;
+  }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 11px; padding: 18px 20px; margin-bottom: 16px;
+  }
+  /* Cards sit in a responsive grid: as many columns as fit at 430px each, so it
+     collapses to a single column on a narrow window without a media query.
+     `align-items: start` keeps each card its natural height instead of
+     stretching the short ones to match the tallest in the row. */
+  #cards {
+    display: grid; gap: 16px; align-items: start;
+    grid-template-columns: repeat(auto-fit, minmax(430px, 1fr));
+  }
+  #cards .card { margin-bottom: 0; }
+  .top { display: flex; flex-wrap: wrap; gap: 14px; align-items: baseline; }
+  .code { font-size: 17px; font-weight: 650; }
+  .label { color: var(--muted); font-size: 13px; }
+  .price { margin-left: auto; font-size: 21px; font-variant-numeric: tabular-nums; }
+  .chg { font-size: 14px; font-variant-numeric: tabular-nums; }
+  .chg.up { color: var(--up); } .chg.down { color: var(--down); }
+
+  .state { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 15px 0 4px; }
+
+  /* This session's high-low range, with the last price marked between them. */
+  .dayrange { margin: 13px 0 2px; }
+  .dayhead {
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline;
+    font-size: 12px; color: var(--muted); margin-bottom: 6px;
+  }
+  .daylabel { letter-spacing: .04em; text-transform: uppercase; font-weight: 650; }
+  .dayband {
+    display: flex; align-items: center; gap: 9px;
+    font-size: 12px; font-variant-numeric: tabular-nums; color: var(--muted);
+  }
+  .daytrack {
+    position: relative; flex: 1; height: 4px; border-radius: 2px;
+    background: linear-gradient(90deg, #2a3242, #3d4657);
+  }
+  .daymark {
+    position: absolute; top: -4px; width: 2px; height: 12px; border-radius: 1px;
+    background: var(--text); transform: translateX(-1px);
+  }
+  .badge {
+    position: relative; font-weight: 700; font-size: 13px; letter-spacing: 0.05em;
+    padding: 5px 12px; border-radius: 6px; border: 1px solid;
+  }
+  .badge.up { color: var(--up); border-color: #1f6f2f; background: #10251633; }
+  .badge.down { color: var(--down); border-color: #8b2a26; background: #2a121133; }
+  .badge.flat { color: var(--flat); border-color: #7a5c12; background: #26200a33; }
+  .badge.mixed { color: var(--muted); border-color: #3d4657; background: #1b1f2633; }
+  .badge.none { color: var(--none); border-color: #3a4048; background: #1b1f2633; }
+  .meta { color: var(--muted); font-size: 13px; }
+
+  .mom {
+    display: flex; flex-wrap: wrap; gap: 18px; align-items: baseline;
+    margin: 13px 0 2px; padding: 10px 13px; border-radius: 8px;
+    background: #1b1f28; border: 1px solid var(--line); font-size: 13px;
+  }
+  .mom b { font-weight: 600; font-size: 12px; letter-spacing: 0.06em;
+           color: var(--muted); text-transform: uppercase; }
+  .mom .v { font-variant-numeric: tabular-nums; }
+
+  table { width: 100%; border-collapse: collapse; margin: 12px 0 6px; table-layout: fixed; }
+  th:nth-child(1), td:nth-child(1) { width: 30%; }
+  th:nth-child(2), td:nth-child(2) { width: 15%; }
+  th:nth-child(3), td:nth-child(3) { width: 55%; }
+  th { text-align: left; color: var(--muted); font-weight: 500; font-size: 11px;
+       text-transform: uppercase; letter-spacing: 0.07em; padding: 0 8px 7px 0;
+       border-bottom: 1px solid var(--line); }
+  td { padding: 7px 8px 7px 0; border-bottom: 1px solid #1e222b; font-size: 14px; }
+  td.val { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+  td.note { color: var(--muted); font-size: 13px; }
+
+  .caveat {
+    margin-top: 11px; padding: 10px 12px; border-radius: 7px; font-size: 13px;
+    background: #241f0e55; border: 1px solid #5c4a14; color: #e3cd8f;
+  }
+  .err {
+    margin-top: 11px; padding: 10px 12px; border-radius: 7px; font-size: 13px;
+    background: #2a121155; border: 1px solid #8b2a26; color: #f4a9a5;
+  }
+  .err code, .foot code { background: #0c0e12; padding: 1px 5px; border-radius: 4px; }
+  .notice {
+    margin: 0 0 18px; padding: 11px 14px; border-radius: 8px; font-size: 13px;
+    background: #12202b; border: 1px solid #24455c; color: #a9cbe0;
+  }
+  .notice.bad { background: #2a1211; border-color: #8b2a26; color: #f4a9a5; }
+  .foot { margin-top: 26px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+
+  /* Shared section block used inside the tabs. */
+  .block {
+    margin: 0 0 18px; padding: 14px 16px 15px; border-radius: 10px;
+    background: var(--panel); border: 1px solid var(--line); font-size: 13px;
+  }
+  .block h2 {
+    display: flex; align-items: center; gap: 9px;
+    font-size: 13px; font-weight: 600; margin: 0; color: var(--text);
+  }
+  .sessbody { padding: 0; }
+  .sessbody ol { margin: 12px 0; padding-left: 20px; color: var(--muted); line-height: 1.7; }
+  .sessbody a { color: #7fb2e0; }
+  .sessbody code {
+    background: #0c0e12; padding: 1px 5px; border-radius: 4px; color: var(--text);
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--none); flex: none; }
+  .dot.ok { background: var(--up); }
+  .dot.bad { background: var(--down); }
+  .sessform { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+  .sessform input {
+    flex: 1 1 220px; padding: 9px 11px; border-radius: 7px;
+    border: 1px solid #3d4657; background: #0c0e12; color: var(--text);
+    font: inherit; font-variant-numeric: tabular-nums;
+  }
+  .sessform input:focus { outline: none; border-color: #5a7fa8; }
+  .sessform button {
+    padding: 9px 16px; border-radius: 7px; border: 1px solid #2f6b3c;
+    background: #16301f; color: #7ee094; font: inherit; font-weight: 600;
+    cursor: pointer;
+  }
+  .sessform button:hover { background: #1c3d27; }
+  .sessform button:disabled { opacity: .5; cursor: default; }
+  /* Masked field with a reveal toggle. The wrapper carries the flex sizing the
+     bare input used to have, so the row layout is unchanged. */
+  .secretwrap { position: relative; display: flex; flex: 1 1 220px; }
+  .sessform .secretwrap input { flex: 1 1 auto; width: 100%; padding-right: 38px; }
+  .secretwrap .revealbtn {
+    position: absolute; right: 5px; top: 50%; transform: translateY(-50%);
+    width: 28px; height: 28px; min-width: 0; padding: 0;
+    border: none; border-radius: 6px; box-shadow: none;
+    background: none; color: var(--muted); cursor: pointer; font: inherit;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .secretwrap .revealbtn:hover, .secretwrap .revealbtn:focus-visible {
+    color: var(--text); background: #22293a; outline: none;
+  }
+  .secretwrap .revealbtn svg { width: 16px; height: 16px; display: block; }
+
+  .sessmsg { margin-top: 11px; font-size: 13px; line-height: 1.5; }
+  .sessmsg.ok { color: var(--up); }
+  .sessmsg.bad { color: #f4a9a5; }
+
+  /* Watchlist chips and search results. */
+  .chips { display: flex; flex-wrap: wrap; gap: 7px; margin: 11px 0 13px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 6px 8px 6px 11px; border-radius: 20px;
+    background: #22293a; border: 1px solid #3d4657; font-size: 13px;
+  }
+  .chip b { font-weight: 650; }
+  .chip span { color: var(--muted); }
+  .chip button {
+    width: 18px; height: 18px; padding: 0; border-radius: 50%;
+    border: 1px solid #4a5468; background: transparent; color: var(--muted);
+    font: inherit; font-size: 13px; line-height: 1; cursor: pointer;
+  }
+  .chip button:hover { border-color: #8b2a26; color: var(--down); background: #2a1211; }
+  .chips .empty { color: var(--muted); font-size: 13px; }
+
+  .results { display: flex; flex-direction: column; gap: 5px; margin-top: 11px; }
+  .result {
+    display: flex; gap: 11px; align-items: baseline; text-align: left;
+    padding: 8px 11px; border-radius: 7px; cursor: pointer;
+    background: #0c0e12; border: 1px solid var(--line); color: var(--text);
+    font: inherit; font-size: 13px;
+  }
+  .result:hover, .result:focus-visible {
+    border-color: #5a7fa8; background: #12202b; outline: none;
+  }
+  .result code { color: #7fb2e0; font-weight: 650; min-width: 62px; }
+  .result span { color: var(--muted); }
+  .result.disabled { opacity: .45; cursor: default; }
+
+  /* IPO table. */
+  .ipotable { width: 100%; border-collapse: collapse; margin: 12px 0 4px; table-layout: auto; }
+  .ipotable th, .ipotable td { width: auto; }
+  .ipotable td { vertical-align: top; }
+  .ipotable .sym { font-weight: 650; white-space: nowrap; }
+  .ipotable .co { color: var(--muted); font-size: 12.5px; }
+  .ipotable .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .pill {
+    display: inline-block; padding: 2px 8px; border-radius: 11px;
+    font-size: 11px; font-weight: 700; letter-spacing: .04em; border: 1px solid;
+  }
+  .pill.open { color: var(--up); border-color: #1f6f2f; background: #10251633; }
+  .pill.upcoming { color: #7fb2e0; border-color: #24455c; background: #12202b; }
+  .pill.closed { color: var(--none); border-color: #3a4048; }
+  .pill.sme { color: var(--flat); border-color: #7a5c12; background: #26200a33; margin-left: 5px; }
+  /* Mainboard and SME are shown as separate boards. */
+  .ipogroup + .ipogroup { margin-top: 26px; border-top: 1px solid var(--line); padding-top: 18px; }
+  .ipogroup h3 {
+    display: flex; align-items: baseline; gap: 10px; margin: 0;
+    font-size: 13px; letter-spacing: .05em; text-transform: uppercase;
+  }
+  .ipogroup h3 .ipogroupmeta {
+    font-weight: 400; letter-spacing: 0; text-transform: none;
+    color: var(--muted); font-size: 12px;
+  }
+  .ipogroup .iponote { margin: 7px 0 0; }
+  .ipogroup .ipotable { margin-top: 10px; }
+  .band { display: grid; gap: 1px; font-variant-numeric: tabular-nums; }
+  .band .bandkey {
+    color: var(--muted); font-size: 11px; text-transform: uppercase;
+    letter-spacing: .04em; margin-right: 4px;
+  }
+  .remindbtn {
+    padding: 3px 9px; border-radius: 6px; border: 1px solid #4a5468;
+    background: transparent; color: var(--muted); font: inherit; font-size: 12px;
+    cursor: pointer; white-space: nowrap;
+  }
+  .remindbtn:hover { color: var(--text); border-color: #5a7fa8; }
+  .remindbtn.on { color: var(--up); border-color: #1f6f2f; background: #10251633; }
+  .deadline { color: var(--flat); font-weight: 600; }
+  .sub-hot { color: var(--up); font-weight: 650; }
+  .sessform select {
+    padding: 9px 11px; border-radius: 7px; border: 1px solid #3d4657;
+    background: #0c0e12; color: var(--text); font: inherit; cursor: pointer;
+  }
+  .sessform select:focus { outline: none; border-color: #5a7fa8; }
+  .alertrow {
+    display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+    padding: 9px 11px; margin-top: 7px; border-radius: 8px;
+    background: #0c0e12; border: 1px solid var(--line); font-size: 13px;
+  }
+  .alertrow.fired { border-color: #7a5c12; background: #26200a33; }
+  .alertrow b { font-weight: 650; }
+  .alertrow .when { color: var(--muted); margin-left: auto; }
+  .alertrow button {
+    padding: 4px 10px; border-radius: 6px; border: 1px solid #4a5468;
+    background: transparent; color: var(--muted); font: inherit;
+    font-size: 12px; cursor: pointer;
+  }
+  .alertrow button:hover { color: var(--text); border-color: #5a7fa8; }
+  .alertrow button.del:hover { color: var(--down); border-color: #8b2a26; background: #2a1211; }
+
+  .ipofoot { margin-top: 10px; color: var(--muted); font-size: 12px; line-height: 1.55; }
+  #notifyRow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  #notifyRow[hidden] { display: none; }
+  #notifyRow button {
+    padding: 4px 10px; border-radius: 6px; border: 1px solid #4a5468;
+    background: transparent; color: var(--muted); font: inherit;
+    font-size: 12px; cursor: pointer;
+  }
+  #notifyRow button:hover { color: var(--text); border-color: #5a7fa8; }
+  .linkbtn {
+    background: none; border: none; padding: 0; margin-left: 4px;
+    color: #7fb2e0; font: inherit; text-decoration: underline; cursor: pointer;
+  }
+  .linkbtn:hover { color: #a9cbe0; }
+
+  /* Optional Firebase sign-in row. Hidden entirely when Firebase is off. */
+  .fbrow {
+    display: flex; flex-wrap: wrap; gap: 9px; align-items: center;
+    padding: 11px 0; border-bottom: 1px solid var(--line);
+    color: var(--muted); font-size: 12.5px;
+  }
+  .fbrow[hidden] { display: none; }
+  .fbbtn {
+    margin-left: auto; padding: 6px 12px; border-radius: 7px;
+    border: 1px solid #3d4657; background: #22293a; color: var(--text);
+    font: inherit; font-size: 12.5px; cursor: pointer;
+  }
+  .fbbtn:hover { border-color: #5a7fa8; background: #12202b; }
+  .fbbtn:disabled { opacity: .5; cursor: default; }
+
+  /* Hover/focus explanations. */
+  .hint { position: relative; cursor: help; }
+  .hint:focus-visible { outline: none; }
+  .tip {
+    position: absolute; bottom: calc(100% + 8px); left: -8px;
+    width: max-content; max-width: 330px; padding: 10px 12px;
+    background: #0b0d11; color: var(--text); border: 1px solid #3d4657;
+    border-radius: 8px; box-shadow: 0 8px 22px #000a;
+    font-size: 12.5px; font-weight: 400; font-style: normal; line-height: 1.5;
+    text-align: left; white-space: normal; letter-spacing: 0; text-transform: none;
+    opacity: 0; visibility: hidden; transition: opacity .12s; z-index: 20;
+  }
+  .hint:hover > .tip, .hint:focus-visible > .tip { opacity: 1; visibility: visible; }
+  .info {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 15px; height: 15px; margin-left: 5px; border-radius: 50%;
+    border: 1px solid #3d4657; color: var(--muted);
+    font-size: 10px; font-weight: 700; font-style: normal; line-height: 1;
+    vertical-align: middle; flex: none; user-select: none;
+  }
+  .info:hover, .info:focus-visible {
+    color: var(--text); border-color: #5a6478; background: #22293a;
+  }
+  th .info { margin-left: 4px; }
+  .badge.hint::after {
+    content: ""; position: absolute; left: 11px; right: 11px; bottom: 3px;
+    border-bottom: 1px dotted currentColor; opacity: .45;
+  }
+  .badge.hint:hover, .badge.hint:focus-visible { filter: brightness(1.35); }
+</style>
+</head>
+<body>
+<div class="gate splash" id="splash" role="status" aria-live="polite">
+  <div class="gatebox">
+    <div class="spinner" aria-hidden="true"></div>
+    <p class="gatesub" id="splashMsg" style="margin:0">Checking sign-in…</p>
+  </div>
+</div>
+
+<div class="gate" id="gate" hidden>
+  <div class="gatebox">
+    <h1>Trading Assist</h1>
+    <p class="gatesub">ICICI Direct Breeze dashboard.<br>Sign in with your Google account to continue.</p>
+    <button type="button" class="gatebtn" id="gateSignIn">
+      <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
+        <path fill="#4285F4" d="M22.6 12.2c0-.8-.1-1.4-.2-2H12v3.9h6c-.1 1-.8 2.5-2.2 3.5l-.1.1 3.3 2.6.2.1c2.1-2 3.4-4.8 3.4-8.2z"/>
+        <path fill="#34A853" d="M12 23.5c3 0 5.5-1 7.3-2.7l-3.5-2.7c-1 .7-2.2 1.1-3.8 1.1-2.9 0-5.4-1.9-6.3-4.6l-.1.1-3.4 2.6v.1A11.5 11.5 0 0 0 12 23.5z"/>
+        <path fill="#FBBC05" d="M5.7 14.6a7 7 0 0 1 0-4.5V10L2.2 7.3A11.5 11.5 0 0 0 1 12.4c0 1.8.4 3.6 1.2 5.1l3.5-2.9z"/>
+        <path fill="#EA4335" d="M12 5.5c2 0 3.4.9 4.2 1.6l3.1-3C17.4 2.3 15 1.3 12 1.3 7.7 1.3 4 3.8 2.2 7.3l3.5 2.8C6.6 7.4 9.1 5.5 12 5.5z"/>
+      </svg>
+      Sign in with Google
+    </button>
+    <div class="sessmsg" id="gateMsg"></div>
+  </div>
+</div>
+
+<div class="wrap" id="app" hidden>
+  <div class="head">
+    <div>
+      <h1>Trading Assist</h1>
+      <div class="sub">ICICI Direct Breeze. Describes what price is doing — it does not tell you what to do.</div>
+    </div>
+
+    <div class="acctwrap">
+      <button type="button" class="accticon" id="acctToggle" aria-expanded="false"
+              aria-controls="acctPanel" aria-label="Account settings" title="Account">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="8" r="3.6"></circle>
+          <path d="M4.5 20c0-3.6 3.4-6 7.5-6s7.5 2.4 7.5 6"></path>
+        </svg>
+        <span class="dot" id="acctDot"></span>
+      </button>
+
+      <div class="acctpanel" id="acctPanel" hidden role="group" aria-label="Account settings">
+        <div class="acctstatus" id="acctText">Account</div>
+
+        <div class="fbrow" id="fbRow" hidden>
+          <span id="fbStatus">Not signed in</span>
+          <button type="button" class="fbbtn" id="fbSignIn">Sign in with Google</button>
+          <button type="button" class="linkbtn" id="fbSignOut" hidden>Sign out</button>
+        </div>
+        <div class="sessmsg" id="fbMsg"></div>
+
+        <div class="sessbody">
+          <ol>
+            <li>Register an app at <a href="https://api.icicidirect.com/apiuser/home"
+                target="_blank" rel="noopener noreferrer">api.icicidirect.com</a>
+                (Redirect URL <code>https://127.0.0.1</code>).</li>
+            <li>Paste the <b>App Key</b> and <b>Secret Key</b> below.</li>
+          </ol>
+          <form class="sessform" id="acctForm">
+            <input id="acctKey" placeholder="App Key" autocomplete="off" spellcheck="false"
+                   aria-label="Breeze App Key" data-secret="App Key">
+            <input id="acctSecret" placeholder="Secret Key" autocomplete="off"
+                   spellcheck="false" aria-label="Breeze Secret Key" data-secret="Secret Key">
+            <button type="submit" id="acctBtn">Save</button>
+          </form>
+          <div class="sessmsg" id="acctMsg"></div>
+          <p class="ipofoot">
+            Stored in <b>this browser only</b> (localStorage) and sent to your local
+            server to sign Breeze requests. The server keeps them in memory and never
+            writes them to disk. These keys can place trades, so do not enter them on
+            a server you do not control.
+            <button type="button" class="linkbtn" id="acctForget">Forget on this device</button>
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="banner" id="banner">Loading…</div>
+
+  <dialog id="fireDialog" aria-labelledby="fireTitle">
+    <div class="firedlg">
+      <h3 id="fireTitle">Price alert</h3>
+      <div class="firelist" id="fireDlgList"></div>
+      <div class="actions">
+        <button type="button" id="fireView">View alerts</button>
+        <button type="button" id="fireClose" autofocus>Dismiss</button>
+      </div>
+    </div>
+  </dialog>
+
+  <div class="tabbar" role="tablist" aria-label="Sections">
+    <button role="tab" id="tab-stocks" aria-controls="panel-stocks" aria-selected="true">Stocks</button>
+    <button role="tab" id="tab-ipos" aria-controls="panel-ipos" aria-selected="false">IPOs
+      <span class="tabcount" id="ipoCount" hidden></span></button>
+    <button role="tab" id="tab-alerts" aria-controls="panel-alerts" aria-selected="false">Alerts
+      <span class="tabcount" id="alertCount" hidden></span></button>
+    <button role="tab" id="tab-session" aria-controls="panel-session" aria-selected="false">Session
+      <span class="tabdot" id="sessTabDot"></span></button>
+  </div>
+
+  <section role="tabpanel" id="panel-stocks" aria-labelledby="tab-stocks" tabindex="0">
+    <div class="tfbar" id="tfbar"></div>
+
+    <div class="block">
+      <h2><span class="dot ok"></span><span id="watchText">Watchlist</span></h2>
+      <div class="chips" id="chips"></div>
+      <form class="sessform" id="watchForm">
+        <input id="watchInput" placeholder="Search by company name or code, e.g. Reliance"
+               autocomplete="off" spellcheck="false" aria-label="Search NSE equities">
+        <button type="submit">Search</button>
+      </form>
+      <div class="results" id="watchResults"></div>
+      <div class="sessmsg" id="watchMsg"></div>
+    </div>
+
+    <div class="notice" id="notice"></div>
+    <div id="cards"></div>
+  </section>
+
+  <section role="tabpanel" id="panel-ipos" aria-labelledby="tab-ipos" tabindex="0" hidden>
+    <div class="block">
+      <h2><span class="dot" id="ipoDot"></span><span id="ipoText">IPOs</span></h2>
+      <div id="ipoBody"></div>
+    </div>
+  </section>
+
+  <section role="tabpanel" id="panel-alerts" aria-labelledby="tab-alerts" tabindex="0" hidden>
+    <div class="block">
+      <h2><span class="dot" id="alertDot"></span><span id="alertText">Price alerts</span></h2>
+      <form class="sessform" id="alertForm">
+        <select id="alertCode" aria-label="Stock"></select>
+        <select id="alertDir" aria-label="Direction">
+          <option value="above">rises above</option>
+          <option value="below">falls below</option>
+        </select>
+        <input id="alertPrice" placeholder="price, e.g. 1350" inputmode="decimal"
+               autocomplete="off" aria-label="Trigger price">
+        <input id="alertNote" placeholder="note (optional)" autocomplete="off"
+               aria-label="Note">
+        <button type="submit" id="alertBtn">Add alert</button>
+      </form>
+      <div class="sessmsg" id="alertMsg"></div>
+      <p class="ipofoot" id="notifyRow" hidden>
+        <span id="notifyState"></span>
+        <button type="button" id="notifyBtn">Turn on notifications</button>
+        <button type="button" id="notifyTest">Send a test</button>
+      </p>
+      <div id="alertList"></div>
+      <p class="ipofoot" id="alertFoot"></p>
+    </div>
+  </section>
+
+  <section role="tabpanel" id="panel-session" aria-labelledby="tab-session" tabindex="0" hidden>
+    <div class="block">
+      <h2><span class="dot" id="sessDot"></span><span id="sessText">Checking session…</span></h2>
+      <div class="sessbody">
+        <ol>
+          <li><a id="sessLink" href="#" target="_blank" rel="noopener noreferrer">Open the Breeze login page</a> and log in.</li>
+          <li>Copy the <code>apisession</code> value out of the <code>https://127.0.0.1/?apisession=…</code> redirect.</li>
+          <li>Paste it below and save. The token goes stale within minutes, so do it straight away.</li>
+        </ol>
+        <form class="sessform" id="sessForm">
+          <input id="sessInput" placeholder="apisession, e.g. 56784556"
+                 autocomplete="off" spellcheck="false" aria-label="Breeze apisession token"
+                 data-secret="session ID">
+          <button type="submit" id="sessBtn">Save session</button>
+        </form>
+        <div class="sessmsg" id="sessMsg"></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="foot" id="foot"></div>
+</div>
+
+<script>
+const LABELS = { "1day": "Daily", "30minute": "30-min", "5minute": "5-min" };
+const STATE_CLASS = { "UPTREND": "up", "DOWNTREND": "down",
+                      "RANGE-BOUND": "flat", "MIXED": "mixed", "TREND UNKNOWN": "none" };
+const TABS = ["stocks", "ipos", "alerts", "session"];
+const AUTH_TIMEOUT_MS = 5000;
+
+const params = new URLSearchParams(location.search);
+let timeframe = params.get("tf") || "1day";
+let activeTab = TABS.includes(params.get("tab")) ? params.get("tab") : "stocks";
+
+const rupee = n => n == null ? "—"
+  : "₹" + Number(n).toLocaleString("en-IN", {minimumFractionDigits: 2, maximumFractionDigits: 2});
+
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+let GLOSSARY = { state: {}, data: {}, indicator: {}, momentum: "" };
+
+/** Focusable circled-i bubble. Returns "" when there is nothing to explain. */
+function info(text) {
+  if (!text) return "";
+  return `<i class="hint info" tabindex="0" role="note"
+     aria-label="Explanation">i<span class="tip">${esc(text)}</span></i>`;
+}
+
+/** State badge that explains itself on hover/focus, with no separate icon. */
+function stateBadge(state) {
+  const cls = STATE_CLASS[state] || "none";
+  const text = GLOSSARY.state[state];
+  if (!text) return `<span class="badge ${cls}">${esc(state)}</span>`;
+  return `<span class="badge ${cls} hint" tabindex="0" role="note"
+    aria-label="${esc(state)} — what this means">${esc(state)}<span class="tip">${esc(text)}</span></span>`;
+}
+
+// ---- section tabs -------------------------------------------------------
+function syncUrl() {
+  history.replaceState(null, "", `?tab=${activeTab}&tf=${timeframe}`);
+}
+
+function showTab(name, { focus = false } = {}) {
+  if (!TABS.includes(name)) return;
+  activeTab = name;
+  for (const t of TABS) {
+    const on = t === name;
+    document.getElementById(`tab-${t}`).setAttribute("aria-selected", String(on));
+    document.getElementById(`panel-${t}`).hidden = !on;
+  }
+  if (focus) document.getElementById(`tab-${name}`).focus();
+  syncUrl();
+}
+
+document.querySelectorAll('.tabbar [role="tab"]').forEach(btn => {
+  btn.addEventListener("click", () => showTab(btn.id.replace("tab-", "")));
+  btn.addEventListener("keydown", ev => {
+    const i = TABS.indexOf(activeTab);
+    if (ev.key === "ArrowRight") showTab(TABS[(i + 1) % TABS.length], { focus: true });
+    if (ev.key === "ArrowLeft") showTab(TABS[(i - 1 + TABS.length) % TABS.length], { focus: true });
+  });
+});
+
+// ---- account (credentials live in this browser only) --------------------
+const LS_KEY = "breeze.credentials";
+
+function loadCreds() {
+  try { return JSON.parse(localStorage.getItem(LS_KEY)) || null; } catch { return null; }
+}
+
+/** Match Python's quote_plus so the login URL is byte-identical. */
+function encodeKey(key) {
+  return encodeURIComponent(key).replace(/[!'()*]/g,
+    c => "%" + c.charCodeAt(0).toString(16).toUpperCase());
+}
+
+function buildLoginUrl(apiKey) {
+  return "https://api.icicidirect.com/apiuser/login?api_key=" + encodeKey(apiKey);
+}
+
+// The session key is kept here too, because a host with an ephemeral disk loses
+// data/session.json on every restart and the daily token is one-shot — it cannot
+// simply be replayed. Holding the exchanged key means a cold start costs nothing.
+const LS_SESSION = "breeze.session";
+
+function loadStoredSession() {
+  try { return JSON.parse(localStorage.getItem(LS_SESSION)) || null; } catch { return null; }
+}
+
+/** Keep whatever session the server currently holds, so a restart can replay it. */
+async function rememberSession() {
+  try {
+    const res = await fetch("/api/session/key");
+    if (!res.ok) return false;                    // 404 = nothing stored yet
+    const s = await res.json();
+    if (!s.user_id || !s.session_key) return false;
+    localStorage.setItem(LS_SESSION, JSON.stringify(s));
+    return true;
+  } catch { return false; }
+}
+
+/** Push the stored session back after the server lost its disk. */
+async function restoreSession() {
+  const s = loadStoredSession();
+  if (!s || !s.user_id || !s.session_key) return false;
+  try {
+    const res = await fetch("/api/session/restore", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(s),
+    });
+    // A rejection means these credentials did not mint that key, so the copy is
+    // useless and keeping it would retry the same failure on every load.
+    if (!res.ok) localStorage.removeItem(LS_SESSION);
+    return res.ok;
+  } catch { return false; }
+}
+
+/** Reconcile browser and server: restore what the server lost, keep what it has. */
+async function syncSession() {
+  try {
+    const info = await (await fetch("/api/session")).json();
+    if (info.ok) return await rememberSession();
+    if (await restoreSession()) return await rememberSession();
+  } catch { /* the banner already reports an unreachable server */ }
+  return false;
+}
+
+async function armCredentials() {
+  const c = loadCreds();
+  if (!c || !c.api_key || !c.secret_key) return false;
+  try {
+    const res = await fetch("/api/credentials", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ api_key: c.api_key, secret_key: c.secret_key }),
+    });
+    return res.ok;
+  } catch { return false; }
+}
+
+function setAcctOpen(open) {
+  const panel = document.getElementById("acctPanel");
+  panel.hidden = !open;
+  document.getElementById("acctToggle").setAttribute("aria-expanded", String(open));
+  if (open) document.getElementById("acctKey").focus();
+}
+
+const acctIsOpen = () => !document.getElementById("acctPanel").hidden;
+
+document.getElementById("acctToggle").addEventListener("click", ev => {
+  ev.stopPropagation();
+  setAcctOpen(!acctIsOpen());
+});
+document.addEventListener("click", ev => {
+  if (acctIsOpen() && !document.querySelector(".acctwrap").contains(ev.target)) {
+    setAcctOpen(false);
+  }
+});
+document.addEventListener("keydown", ev => {
+  if (ev.key === "Escape" && acctIsOpen()) {
+    setAcctOpen(false);
+    document.getElementById("acctToggle").focus();
+  }
+});
+
+function acctMsg(text, cls = "") {
+  const el = document.getElementById("acctMsg");
+  el.className = "sessmsg " + cls;
+  el.textContent = text;
+}
+
+async function loadAccount({ autoOpen = true } = {}) {
+  const dot = document.getElementById("acctDot");
+  const text = document.getElementById("acctText");
+  try {
+    const s = await (await fetch("/api/credentials")).json();
+    dot.className = "dot " + (s.configured ? "ok" : "bad");
+    text.textContent = s.configured
+      ? "Credentials loaded from this browser."
+      : "No credentials yet — paste your App Key and Secret Key.";
+    if (autoOpen && !s.configured) setAcctOpen(true);
+
+    // Reflect what this browser actually holds. Both fields are masked, so
+    // showing the secret is no more exposed than showing the app key, and a
+    // blank secret beside a filled key looks broken and blocks re-saving.
+    const c = loadCreds();
+    document.getElementById("acctKey").value = (c && c.api_key) || "";
+    document.getElementById("acctSecret").value = (c && c.secret_key) || "";
+
+    return s.configured;
+  } catch {
+    dot.className = "dot bad";
+    text.textContent = "Cannot reach the local server.";
+    return false;
+  }
+}
+
+document.getElementById("acctForm").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  const msg = document.getElementById("acctMsg");
+  const btn = document.getElementById("acctBtn");
+  const api_key = document.getElementById("acctKey").value.trim();
+  const secret_key = document.getElementById("acctSecret").value.trim();
+  if (!api_key || !secret_key) {
+    msg.className = "sessmsg bad";
+    msg.textContent = "Both the App Key and the Secret Key are required.";
+    return;
+  }
+  btn.disabled = true;
+  msg.className = "sessmsg";
+  msg.textContent = "Saving…";
+  try {
+    const res = await fetch("/api/credentials", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ api_key, secret_key }),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      msg.className = "sessmsg bad";
+      msg.textContent = body.detail || "Could not save those credentials.";
+      return;
+    }
+    localStorage.setItem(LS_KEY, JSON.stringify({ api_key, secret_key }));
+    msg.className = "sessmsg ok";
+    msg.textContent = "Saved in this browser. Now enter today's session ID in the Session tab.";
+    await loadAccount({ autoOpen: false });
+    await loadSession();
+    await load();
+    setTimeout(() => setAcctOpen(false), 1400);
+  } catch {
+    msg.className = "sessmsg bad";
+    msg.textContent = "Could not reach the local server.";
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById("acctForget").addEventListener("click", async () => {
+  localStorage.removeItem(LS_KEY);
+  // The session key was minted by the credentials being forgotten, so it is
+  // useless now and keeping it would leave a stray secret in localStorage.
+  localStorage.removeItem(LS_SESSION);
+  await fetch("/api/credentials", { method: "DELETE" });
+  document.getElementById("acctKey").value = "";
+  document.getElementById("acctSecret").value = "";
+  const msg = document.getElementById("acctMsg");
+  msg.className = "sessmsg ok";
+  msg.textContent = "Forgotten from this browser and from the server's memory.";
+  await loadAccount();
+  await load();
+});
+
+// ---- masked inputs with a reveal toggle ---------------------------------
+const EYE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <path d="M1.8 12S5.4 5.4 12 5.4 22.2 12 22.2 12 18.6 18.6 12 18.6 1.8 12 1.8 12z"/>
+  <circle cx="12" cy="12" r="3"/></svg>`;
+
+const EYE_OFF = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <path d="M9.9 5.6A8.6 8.6 0 0 1 12 5.4c6.6 0 10.2 6.6 10.2 6.6a17 17 0 0 1-2.4 3.3M6.2 7.3A17 17 0 0 0 1.8 12S5.4 18.6 12 18.6c1.5 0 2.8-.3 4-.9"/>
+  <path d="M10 10a3 3 0 0 0 4 4"/><path d="M2.5 2.5l19 19"/></svg>`;
+
+/** Mask an input and add an eye button that toggles visibility. */
+function makeRevealable(input) {
+  const label = input.dataset.secret || "value";
+  input.type = "password";
+
+  const wrap = document.createElement("span");
+  wrap.className = "secretwrap";
+  input.parentNode.insertBefore(wrap, input);
+  wrap.appendChild(input);
+
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "revealbtn";
+  btn.tabIndex = 0;
+
+  const sync = () => {
+    const shown = input.type === "text";
+    btn.innerHTML = shown ? EYE_OFF : EYE;
+    btn.setAttribute("aria-pressed", String(shown));
+    btn.setAttribute("aria-label", `${shown ? "Hide" : "Show"} ${label}`);
+    btn.title = btn.getAttribute("aria-label");
+  };
+
+  btn.addEventListener("click", () => {
+    input.type = input.type === "password" ? "text" : "password";
+    sync();
+    input.focus();
+  });
+
+  sync();
+  wrap.appendChild(btn);
+}
+
+document.querySelectorAll("input[data-secret]").forEach(makeRevealable);
+
+// ---- sign-in gate -------------------------------------------------------
+let REQUIRE_LOGIN = false;
+let BOOTED = false;
+
+function gateMsg(text, cls = "") {
+  const el = document.getElementById("gateMsg");
+  el.className = "sessmsg " + cls;
+  el.textContent = text;
+}
+
+/** Exactly one of loading / gate / app is visible at any moment. */
+function setView(view, message) {
+  document.getElementById("splash").hidden = view !== "loading";
+  document.getElementById("gate").hidden = view !== "gate";
+  document.getElementById("app").hidden = view !== "app";
+  if (message) document.getElementById("splashMsg").textContent = message;
+}
+
+const appVisible = () => !document.getElementById("app").hidden;
+
+document.getElementById("gateSignIn").addEventListener("click", async () => {
+  if (!FB) { gateMsg("Firebase is not available.", "bad"); return; }
+  const btn = document.getElementById("gateSignIn");
+  btn.disabled = true;
+  gateMsg("Opening Google sign-in…");
+  try {
+    await FB.fns.signInWithPopup(FB.auth, new FB.fns.GoogleAuthProvider());
+    gateMsg("");
+  } catch (err) {
+    const code = err && err.code ? err.code : "unknown error";
+    gateMsg(`Sign-in failed: ${code}`, "bad");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ---- optional Firebase: identity + watchlist sync -----------------------
+// Deliberately NOT used for Breeze credentials. A Firebase project owner can
+// read every Firestore document, so putting secret keys there would mean taking
+// custody of other people's order-capable broker credentials.
+const FB_SDK = "https://www.gstatic.com/firebasejs/11.0.2";
+let FB = null;          // { auth, db, fns } once initialised
+let FB_USER = null;
+let AUTH_REPORTED = false;
+
+function fbMsg(text, cls = "") {
+  const el = document.getElementById("fbMsg");
+  el.className = "sessmsg " + cls;
+  el.textContent = text;
+}
+
+async function initFirebase(cfg) {
+  if (!cfg || !cfg.enabled || !cfg.firebase) return false;
+  try {
+    const [{ initializeApp }, auth, store] = await Promise.all([
+      import(`${FB_SDK}/firebase-app.js`),
+      import(`${FB_SDK}/firebase-auth.js`),
+      import(`${FB_SDK}/firebase-firestore.js`),
+    ]);
+    const app = initializeApp(cfg.firebase);
+    FB = {
+      auth: auth.getAuth(app),
+      db: store.getFirestore(app),
+      fns: { ...auth, ...store },
+    };
+  } catch (err) {
+    fbMsg("Could not load the Firebase SDK — sync is unavailable.", "bad");
+    if (REQUIRE_LOGIN) setView("gate");
+    gateMsg("Could not load the Firebase SDK, so sign-in is unavailable. "
+            + "Check your connection, or set REQUIRE_LOGIN = False in app_config.py.", "bad");
+    return false;
+  }
+
+  document.getElementById("fbRow").hidden = false;
+  FB.fns.onAuthStateChanged(FB.auth, async user => {
+    AUTH_REPORTED = true;
+    FB_USER = user;
+    document.getElementById("fbStatus").textContent =
+      user ? `Signed in as ${user.email || user.uid}` : "Not signed in";
+    document.getElementById("fbSignIn").hidden = !!user;
+    document.getElementById("fbSignOut").hidden = !user;
+
+    if (user) {
+      if (REQUIRE_LOGIN) setView("loading", "Signed in. Loading your data…");
+      await bootApp();
+      if (REQUIRE_LOGIN) setView("app");
+      await pullWatchlist();
+    } else if (REQUIRE_LOGIN) {
+      setView("gate");
+    }
+  });
+  return true;
+}
+
+function userDoc() {
+  return FB.fns.doc(FB.db, "users", FB_USER.uid);
+}
+
+/** Firestore is the sync layer; the local server keeps the working copy. */
+async function pullWatchlist() {
+  if (!FB || !FB_USER) return;
+  try {
+    const snap = await FB.fns.getDoc(userDoc());
+    const remote = snap.exists() ? snap.data().watchlist : null;
+    if (!Array.isArray(remote)) {
+      await pushWatchlist();               // first sign-in: seed from local
+      fbMsg("Synced this device's watchlist up to your account.", "ok");
+      return;
+    }
+    const res = await fetch("/api/watchlist", {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ codes: remote }),
+    });
+    const body = await res.json();
+    WATCHED = body.watchlist || [];
+    renderChips();
+    await load();
+    fbMsg(body.rejected && body.rejected.length
+      ? `Watchlist synced. Skipped unknown codes: ${body.rejected.join(", ")}.`
+      : "Watchlist synced from your account.", "ok");
+  } catch (err) {
+    fbMsg("Could not read your watchlist from Firestore.", "bad");
+  }
+}
+
+async function pushWatchlist() {
+  if (!FB || !FB_USER) return;
+  try {
+    await FB.fns.setDoc(userDoc(), {
+      watchlist: WATCHED.map(e => e.code),
+      updatedAt: new Date().toISOString(),
+    }, { merge: true });
+  } catch {
+    fbMsg("Could not save your watchlist to Firestore.", "bad");
+  }
+}
+
+document.getElementById("fbSignIn").addEventListener("click", async () => {
+  if (!FB) return;
+  const btn = document.getElementById("fbSignIn");
+  btn.disabled = true;
+  fbMsg("Opening Google sign-in…");
+  try {
+    await FB.fns.signInWithPopup(FB.auth, new FB.fns.GoogleAuthProvider());
+    fbMsg("");
+  } catch (err) {
+    fbMsg(`Sign-in failed: ${err && err.code ? err.code : "unknown error"}`, "bad");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById("fbSignOut").addEventListener("click", async () => {
+  if (!FB) return;
+  setAcctOpen(false);
+  await FB.fns.signOut(FB.auth);   // onAuthStateChanged re-raises the gate
+  fbMsg("Signed out. Your watchlist stays on this machine.", "ok");
+});
+
+// ---- session ------------------------------------------------------------
+function humanAge(mins) {
+  if (mins == null) return "";
+  if (mins < 60) return `${Math.round(mins)} min ago`;
+  const h = mins / 60;
+  return h < 24 ? `${h.toFixed(1)} h ago` : `${Math.floor(h / 24)} d ago`;
+}
+
+async function loadSession() {
+  const dot = document.getElementById("sessDot");
+  const tabDot = document.getElementById("sessTabDot");
+  const text = document.getElementById("sessText");
+  const link = document.getElementById("sessLink");
+  try {
+    const s = await (await fetch("/api/session")).json();
+    const creds = loadCreds();
+    // Built here, not served: the server no longer hands out the app key.
+    if (creds && creds.api_key) link.href = buildLoginUrl(creds.api_key);
+    dot.className = "dot " + (s.ok ? "ok" : "bad");
+    tabDot.className = "tabdot " + (s.ok ? "ok" : "bad");
+    text.textContent = s.ok
+      ? `Session active — ${s.user_id}, saved ${humanAge(s.age_minutes)}.`
+      : (s.reason || "No session — enter today's session ID below.");
+    return s.ok;
+  } catch {
+    dot.className = "dot bad";
+    tabDot.className = "tabdot bad";
+    text.textContent = "Cannot reach the local server.";
+    return false;
+  }
+}
+
+document.getElementById("sessForm").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  const input = document.getElementById("sessInput");
+  const btn = document.getElementById("sessBtn");
+  const msg = document.getElementById("sessMsg");
+  const token = input.value.trim();
+  if (!token) { msg.className = "sessmsg bad"; msg.textContent = "Paste the apisession value first."; return; }
+
+  btn.disabled = true;
+  msg.className = "sessmsg";
+  msg.textContent = "Exchanging with Breeze…";
+  try {
+    const res = await fetch("/api/session", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_token: token }),
+    });
+    const body = await res.json();
+    if (res.ok) {
+      msg.className = "sessmsg ok";
+      msg.textContent = `Session active — ${body.user_id}. Loading data…`;
+      input.value = "";
+      // Keep the exchanged key: the token just used is spent, so this copy is
+      // the only way to survive a server restart without pasting a new one.
+      await rememberSession();
+      // The same refresh boot does, so every tab comes back without a reload.
+      await refreshAll();
+      msg.textContent = `Session active — ${body.user_id}.`;
+    } else {
+      msg.className = "sessmsg bad";
+      msg.textContent = body.detail || "Breeze rejected that token.";
+    }
+  } catch {
+    msg.className = "sessmsg bad";
+    msg.textContent = "Could not reach the local server.";
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ---- watchlist ----------------------------------------------------------
+let WATCHED = [];
+
+function watchMsg(text, cls = "") {
+  const el = document.getElementById("watchMsg");
+  el.className = "sessmsg " + cls;
+  el.textContent = text;
+}
+
+function renderChips() {
+  const box = document.getElementById("chips");
+  document.getElementById("watchText").textContent =
+    `Watchlist — ${WATCHED.length} stock${WATCHED.length === 1 ? "" : "s"}`;
+  if (!WATCHED.length) {
+    box.innerHTML = `<span class="empty">Empty — search below to add a stock.</span>`;
+    return;
+  }
+  box.innerHTML = WATCHED.map(e => `<span class="chip">
+      <b>${esc(e.code)}</b><span>${esc(e.label)}</span>
+      <button type="button" data-remove="${esc(e.code)}"
+        aria-label="Remove ${esc(e.code)}" title="Remove ${esc(e.code)}">&times;</button>
+    </span>`).join("");
+  box.querySelectorAll("[data-remove]").forEach(b =>
+    b.onclick = () => removeCode(b.dataset.remove));
+}
+
+async function loadWatchlist() {
+  try {
+    const d = await (await fetch("/api/watchlist")).json();
+    WATCHED = d.watchlist || [];
+    renderChips();
+    renderAlertCodes();
+  } catch { watchMsg("Cannot reach the local server.", "bad"); }
+}
+
+async function addCode(code) {
+  watchMsg(`Adding ${code}…`);
+  const res = await fetch("/api/watchlist", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code }),
+  });
+  const body = await res.json();
+  if (!res.ok) { watchMsg(body.detail || "Could not add that code.", "bad"); return; }
+  WATCHED = body.watchlist;
+  renderChips();
+  pushWatchlist();
+  watchMsg(`Added ${code}. Fetching its data…`, "ok");
+  document.getElementById("watchResults").innerHTML = "";
+  document.getElementById("watchInput").value = "";
+  await load();
+  watchMsg(`Added ${code}.`, "ok");
+}
+
+async function removeCode(code) {
+  const res = await fetch(`/api/watchlist/${encodeURIComponent(code)}`, { method: "DELETE" });
+  const body = await res.json();
+  if (!res.ok) { watchMsg(body.detail || "Could not remove that code.", "bad"); return; }
+  WATCHED = body.watchlist;
+  renderChips();
+  pushWatchlist();
+  watchMsg(`Removed ${code}.`, "ok");
+  await load();
+}
+
+async function runSearch(query) {
+  const box = document.getElementById("watchResults");
+  if (!query.trim()) { box.innerHTML = ""; return; }
+  try {
+    const d = await (await fetch(`/api/symbols?q=${encodeURIComponent(query)}`)).json();
+    const results = d.results || [];
+    if (!results.length) {
+      box.innerHTML = `<div class="result disabled">No NSE equity matches “${esc(query)}”.</div>`;
+      return;
+    }
+    box.innerHTML = results.map(r => {
+      const already = WATCHED.some(e => e.code === r.code);
+      return `<button type="button" class="result${already ? " disabled" : ""}"
+        ${already ? "disabled" : `data-add="${esc(r.code)}"`}>
+        <code>${esc(r.code)}</code><span>${esc(r.label)}</span>
+        ${already ? "<span>· already added</span>" : ""}</button>`;
+    }).join("");
+    box.querySelectorAll("[data-add]").forEach(b =>
+      b.onclick = () => addCode(b.dataset.add));
+  } catch { watchMsg("Search failed — is the security master reachable?", "bad"); }
+}
+
+let searchTimer;
+document.getElementById("watchInput").addEventListener("input", ev => {
+  clearTimeout(searchTimer);
+  const q = ev.target.value;
+  searchTimer = setTimeout(() => runSearch(q), 250);
+});
+document.getElementById("watchForm").addEventListener("submit", ev => {
+  ev.preventDefault();
+  clearTimeout(searchTimer);
+  runSearch(document.getElementById("watchInput").value);
+});
+
+// ---- price alerts -------------------------------------------------------
+let ALERTS = [];
+
+function alertMsg(text, cls = "") {
+  const el = document.getElementById("alertMsg");
+  el.className = "sessmsg " + cls;
+  el.textContent = text;
+}
+
+/** Keep the symbol picker in step with the watchlist. */
+function renderAlertCodes() {
+  const sel = document.getElementById("alertCode");
+  const keep = sel.value;
+  sel.innerHTML = WATCHED.map(e =>
+    `<option value="${esc(e.code)}">${esc(e.code)}</option>`).join("");
+  if (keep && WATCHED.some(e => e.code === keep)) sel.value = keep;
+}
+
+function renderAlerts(notifications, watcherError) {
+  const list = document.getElementById("alertList");
+  const fired = ALERTS.filter(a => a.triggered_at);
+  const active = ALERTS.filter(a => a.active);
+
+  document.getElementById("alertText").textContent =
+    ALERTS.length ? `Price alerts — ${active.length} armed, ${fired.length} fired`
+                  : "Price alerts — none set";
+  document.getElementById("alertDot").className =
+    "dot " + (fired.length ? "bad" : active.length ? "ok" : "");
+  const badge = document.getElementById("alertCount");
+  badge.hidden = !fired.length;
+  badge.textContent = fired.length ? String(fired.length) : "";
+
+  list.innerHTML = ALERTS.length ? ALERTS.map(a => `
+    <div class="alertrow${a.triggered_at ? " fired" : ""}">
+      <b>${esc(a.code)}</b>
+      <span>${a.direction === "above" ? "rises above" : "falls below"} ${a.price}</span>
+      ${a.note ? `<span>· ${esc(a.note)}</span>` : ""}
+      <span class="when">${a.triggered_at
+        ? `fired ${esc(a.triggered_at.slice(11))} at ${a.triggered_price}`
+        : "armed"}</span>
+      ${a.triggered_at ? `<button data-rearm="${esc(a.id)}">Re-arm</button>` : ""}
+      <button class="del" data-del="${esc(a.id)}">Delete</button>
+    </div>`).join("") : "";
+
+  list.querySelectorAll("[data-del]").forEach(b =>
+    b.onclick = () => alertAction(`/api/alerts/${b.dataset.del}`, "DELETE", "Deleted."));
+  list.querySelectorAll("[data-rearm]").forEach(b =>
+    b.onclick = () => alertAction(`/api/alerts/${b.dataset.rearm}/rearm`, "POST", "Re-armed."));
+
+  document.getElementById("alertFoot").textContent = watcherError
+    ? `Alert watcher error: ${watcherError}`
+    : (notifications
+      ? "Checked every 5 seconds against live prices, on the server — so alerts fire even with this tab closed, and play a sound when they do. The pop-up comes from the browser, so it needs the permission above. Each alert fires once, then waits to be re-armed."
+      : "Alerts fire on the server and are listed here; the alert sound is macOS-only.");
+}
+
+async function alertAction(url, method, okMsg) {
+  const res = await fetch(url, { method });
+  const body = await res.json();
+  if (!res.ok) { alertMsg(body.detail || "That did not work.", "bad"); return; }
+  ALERTS = body.alerts;
+  await loadAlerts();
+  alertMsg(okMsg, "ok");
+}
+
+// ---- browser notifications ----------------------------------------------
+// The server also attempts a macOS banner, but macOS attributes an osascript
+// banner to Script Editor, offers no permission prompt for it, and discards it
+// silently while still reporting success. The browser's own API is the only
+// visual channel that asks permission and can be relied on, so it leads here
+// and the server-side sound is the fallback.
+const SEEN_FIRED_KEY = "firedAlertIds";
+const FRESH_FIRE_MS = 10 * 60 * 1000;
+let seenFired = new Set(JSON.parse(localStorage.getItem(SEEN_FIRED_KEY) || "[]"));
+let alertsPrimed = false;
+
+function notifySupported() {
+  return "Notification" in window;
+}
+
+// Modal dialog for a trip. Independent of notification permission, so it is the
+// one channel that always shows something while the page is open — and unlike a
+// banner it cannot be scrolled past or mistaken for part of the layout.
+let firedShown = [];
+
+function renderFireDialog() {
+  const dlg = document.getElementById("fireDialog");
+  if (!firedShown.length) {
+    if (dlg.open) dlg.close();
+    return;
+  }
+  document.getElementById("fireDlgList").innerHTML = firedShown.map(a => `
+    <div><b>${esc(a.code)}</b> ${a.direction === "above" ? "rose above" : "fell below"}
+      ${a.price} — now ${a.triggered_price}
+      <span class="when">${esc(String(a.triggered_at || "").slice(11))}</span></div>`).join("");
+  // Already open means another alert tripped while this was on screen; the list
+  // above has been rebuilt, so re-opening would only steal focus again.
+  if (!dlg.open && typeof dlg.showModal === "function") dlg.showModal();
+}
+
+/** Add one tripped alert to the dialog, newest first, capped so it stays readable. */
+function announceFired(alert) {
+  if (firedShown.some(a => a.id === alert.id)) return;
+  firedShown.unshift(alert);
+  if (firedShown.length > 4) firedShown.length = 4;
+  renderFireDialog();
+}
+
+document.getElementById("fireView").onclick = () => {
+  document.getElementById("fireDialog").close();
+  showTab("alerts", { focus: true });
+};
+document.getElementById("fireClose").onclick = () =>
+  document.getElementById("fireDialog").close();
+// Covers Dismiss, Esc and any programmatic close, so a dismissed trip does not
+// reappear on the next poll while a genuinely new one still can.
+document.getElementById("fireDialog").addEventListener("close", () => {
+  firedShown = [];
+});
+
+function renderNotifyRow() {
+  const row = document.getElementById("notifyRow");
+  const state = document.getElementById("notifyState");
+  const ask = document.getElementById("notifyBtn");
+  const test = document.getElementById("notifyTest");
+  row.hidden = false;
+  if (!notifySupported()) {
+    state.textContent = "This browser cannot show notifications.";
+    ask.hidden = test.hidden = true;
+    return;
+  }
+  const perm = Notification.permission;
+  state.textContent =
+    perm === "granted" ? "Notifications are on — a fired alert pops up on the desktop."
+    : perm === "denied" ? "Notifications are blocked for this site. Re-allow them in the padlock menu beside the address bar, then reload."
+    : "Notifications are off, so a fired alert only makes a sound and shows up here.";
+  ask.hidden = perm !== "default";
+  test.hidden = perm !== "granted";
+}
+
+async function askNotifyPermission() {
+  if (!notifySupported()) return;
+  try { await Notification.requestPermission(); } catch { /* dismissed */ }
+  renderNotifyRow();
+}
+
+function showNotification(title, body) {
+  if (!notifySupported() || Notification.permission !== "granted") return false;
+  try {
+    new Notification(title, { body, tag: body });
+    return true;
+  } catch { return false; }
+}
+
+/** Pop up a notification for each alert that has fired since the last poll. */
+function notifyFired(entries, prime) {
+  const now = Date.now();
+  let changed = false;
+  for (const a of entries) {
+    if (!a.triggered_at) {
+      // Re-armed: forget it, so the next crossing notifies again.
+      if (seenFired.delete(a.id)) changed = true;
+      continue;
+    }
+    if (seenFired.has(a.id)) continue;
+    seenFired.add(a.id);
+    changed = true;
+    // On the first poll of a page load, only announce a recent fire. Older ones
+    // are already listed below and would otherwise re-notify on every reload.
+    const age = now - Date.parse(a.triggered_at);
+    if (!prime || (age >= 0 && age < FRESH_FIRE_MS)) {
+      announceFired(a);
+      showNotification("Price alert",
+        `${a.code} ${a.direction === "above" ? "rose above" : "fell below"} `
+        + `${a.price} — now ${a.triggered_price}`);
+    }
+  }
+  if (changed) {
+    localStorage.setItem(SEEN_FIRED_KEY, JSON.stringify([...seenFired]));
+  }
+}
+
+async function loadAlerts() {
+  try {
+    const d = await (await fetch("/api/alerts")).json();
+    ALERTS = d.alerts || [];
+    notifyFired(ALERTS, !alertsPrimed);
+    alertsPrimed = true;
+    renderAlertCodes();
+    renderAlerts(d.notifications, d.watcher_error);
+  } catch { alertMsg("Cannot reach the local server.", "bad"); }
+}
+
+document.getElementById("notifyBtn").onclick = askNotifyPermission;
+document.getElementById("notifyTest").onclick = () => {
+  if (showNotification("Trading Assist", "Test alert — this is what a fired alert looks like.")) {
+    alertMsg("Test notification sent.", "ok");
+  } else {
+    alertMsg("Could not show a notification.", "bad");
+  }
+};
+renderNotifyRow();
+
+document.getElementById("alertForm").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  const btn = document.getElementById("alertBtn");
+  const price = document.getElementById("alertPrice").value.trim();
+  if (!price) { alertMsg("Enter a trigger price.", "bad"); return; }
+  btn.disabled = true;
+  try {
+    const res = await fetch("/api/alerts", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        code: document.getElementById("alertCode").value,
+        direction: document.getElementById("alertDir").value,
+        price: Number(price),
+        note: document.getElementById("alertNote").value,
+      }),
+    });
+    const body = await res.json();
+    if (!res.ok) { alertMsg(body.detail || "Could not add that alert.", "bad"); return; }
+    ALERTS = body.alerts;
+    document.getElementById("alertPrice").value = "";
+    document.getElementById("alertNote").value = "";
+    renderAlerts(true, null);
+    await loadAlerts();
+    alertMsg("Alert added.", "ok");
+  } catch {
+    alertMsg("Cannot reach the local server.", "bad");
+  } finally { btn.disabled = false; }
+});
+
+// ---- IPOs ---------------------------------------------------------------
+function ipoWindow(r) {
+  if (r.state === "OPEN") {
+    const d = r.days_left;
+    const word = d === 0 ? "closes today" : d === 1 ? "closes tomorrow" : `${d} days left`;
+    return `<span class="deadline">${word}</span><br><span class="co">${esc(r.opens)} – ${esc(r.closes)}</span>`;
+  }
+  if (r.state === "UPCOMING") {
+    const d = r.days_to_start;
+    const word = d === 0 ? "opens today" : d === 1 ? "opens tomorrow" : `opens in ${d} days`;
+    return `${word}<br><span class="co">${esc(r.opens)} – ${esc(r.closes)}</span>`;
+  }
+  return `<span class="co">${esc(r.opens)} – ${esc(r.closes)}</span>`;
+}
+
+function ipoSub(r) {
+  if (r.subscription_times == null) return "—";
+  const cls = r.subscription_times >= 1 ? "sub-hot" : "";
+  return `<span class="${cls}">${r.subscription_times.toFixed(2)}×</span>`;
+}
+
+/** The issue price band, floor and cap labelled separately.
+ *
+ * This is the band the shares are *offered* in, not a traded high and low — an
+ * unlisted issue has no trades. NSE often publishes no band for SME issues, and
+ * saying so beats a dash that reads like a bug.
+ */
+function ipoBand(r) {
+  // Number(null) is 0, not NaN, so a missing band would render as ₹0.00 on an
+  // isFinite check alone. A zero price band is meaningless either way.
+  const lo = Number(r.price_low), hi = Number(r.price_high);
+  if (!(lo > 0) || !(hi > 0)) {
+    return r.price_display ? esc(r.price_display)
+      : `<span class="co">band not published yet</span>`;
+  }
+  return `<div class="band">
+    <span><span class="bandkey">lower</span> ${rupee(lo)}</span>
+    <span><span class="bandkey">upper</span> ${rupee(hi)}</span>
+  </div>`;
+}
+
+let IPO_REMINDERS = [];
+
+const remindedOn = sym => IPO_REMINDERS.some(r => r.symbol === sym);
+
+function ipoTable(rows) {
+  return `
+    <table class="ipotable">
+      <thead><tr><th>Issue</th><th>Status</th><th>Price band</th>
+        <th>Window</th><th class="num">Subscribed</th><th>Remind</th></tr></thead>
+      <tbody>${rows.map(r => `<tr>
+        <td><div class="sym">${esc(r.symbol)}</div><div class="co">${esc(r.company)}</div></td>
+        <td><span class="pill ${r.state.toLowerCase()}">${esc(r.state)}</span></td>
+        <td>${ipoBand(r)}${
+          r.lot_size ? `<div class="co">lot ${esc(r.lot_size)}</div>` : ""}</td>
+        <td>${ipoWindow(r)}</td>
+        <td class="num">${ipoSub(r)}</td>
+        <td>${r.state === "CLOSED" ? "" : `<button type="button" class="remindbtn${
+          remindedOn(r.symbol) ? " on" : ""}" data-remind="${esc(r.symbol)}">${
+          remindedOn(r.symbol) ? "Reminding" : "Remind me"}</button>`}</td>
+      </tr>`).join("")}</tbody>
+    </table>`;
+}
+
+async function toggleReminder(symbol) {
+  const on = remindedOn(symbol);
+  try {
+    const res = await fetch(
+      on ? `/api/ipo-reminders/${encodeURIComponent(symbol)}` : "/api/ipo-reminders",
+      on ? { method: "DELETE" }
+         : { method: "POST", headers: { "Content-Type": "application/json" },
+             body: JSON.stringify({ symbol }) });
+    const body = await res.json();
+    if (!res.ok) { alertMsg(body.detail || "That did not work.", "bad"); return; }
+    IPO_REMINDERS = body.reminders || [];
+  } catch { /* the IPO panel already reports an unreachable server */ }
+  loadIpos();
+}
+
+/** One board's issues. The per-row SME pill is gone — the heading says it now. */
+function ipoGroup(title, rows, empty, note) {
+  const open = rows.filter(r => r.state === "OPEN").length;
+  const meta = rows.length
+    ? `${rows.length} listed${open ? `, ${open} open` : ""}`
+    : "none listed";
+  return `<div class="ipogroup">
+    <h3>${esc(title)}<span class="ipogroupmeta">${esc(meta)}</span></h3>
+    ${note ? `<p class="ipofoot iponote">${note}</p>` : ""}
+    ${rows.length ? ipoTable(rows) : `<p class="ipofoot">${esc(empty)}</p>`}
+  </div>`;
+}
+
+async function loadIpos() {
+  const dot = document.getElementById("ipoDot");
+  const text = document.getElementById("ipoText");
+  const body = document.getElementById("ipoBody");
+  const count = document.getElementById("ipoCount");
+  try {
+    const [d, rem] = await Promise.all([
+      (await fetch("/api/ipos")).json(),
+      fetch("/api/ipo-reminders").then(r => r.json()).catch(() => ({})),
+    ]);
+    IPO_REMINDERS = rem.reminders || [];
+    const rows = d.ipos || [];
+    const open = rows.filter(r => r.state === "OPEN");
+    const soonest = open.length ? open[0] : null;
+
+    // Surface open issues on the tab itself so a deadline is visible from any tab.
+    count.hidden = !open.length;
+    count.textContent = open.length ? String(open.length) : "";
+
+    dot.className = "dot " + (open.length ? "ok" : "");
+    text.textContent = open.length
+      ? `${open.length} open now` +
+        (soonest ? `, ${soonest.symbol} ${soonest.days_left === 0 ? "closes today" :
+           soonest.days_left === 1 ? "closes tomorrow" : `has ${soonest.days_left} days left`}` : "")
+      : `None open${rows.length ? `, ${rows.length} upcoming` : ""}`;
+
+    if (!rows.length) {
+      body.innerHTML = `<p class="ipofoot">${d.error ? esc(d.error)
+        : "No open or upcoming IPOs listed by NSE right now."}</p>`;
+      return;
+    }
+    // Separated because they are not comparable: an SME issue at 1.2x subscribed
+    // sits beside a mainboard issue at 79x in the same list, which reads as though
+    // one is unwanted rather than as two different markets.
+    const mainboard = rows.filter(r => !r.is_sme);
+    const sme = rows.filter(r => r.is_sme);
+
+    body.innerHTML =
+      ipoGroup("Mainboard", mainboard, "No mainboard issues open or upcoming.")
+      + ipoGroup("SME", sme, "No SME issues open or upcoming.",
+          "NSE Emerge platform. The minimum application is much larger than a "
+          + "mainboard issue and these list far less liquid, so subscription "
+          + "multiples here are not comparable with the ones above.")
+      + `<p class="ipofoot">
+        Source: NSE public feed — Breeze has no IPO API, so this is the one section
+        not from your broker.${d.stale ? " <b>Showing a cached copy; NSE was unreachable.</b>" : ""}
+        Applying for an IPO is not possible from here. Subscription figures update
+        through the day and only exist while an issue is open.
+        <b>Remind me</b> notifies you the day before an issue closes and again on the
+        closing day — currently on this desktop only, and only while the server is
+        running.
+      </p>`;
+
+    document.getElementById("ipoBody").querySelectorAll("[data-remind]")
+      .forEach(b => b.onclick = () => toggleReminder(b.dataset.remind));
+  } catch {
+    dot.className = "dot bad";
+    text.textContent = "Could not load";
+    body.innerHTML = `<p class="ipofoot">Could not reach the local server.</p>`;
+  }
+}
+
+// ---- stock readout ------------------------------------------------------
+function renderTfbar(available) {
+  document.getElementById("tfbar").innerHTML = available.map(tf =>
+    `<button data-tf="${tf}" aria-pressed="${tf === timeframe}">${LABELS[tf] || tf}</button>`
+  ).join("");
+  document.querySelectorAll("#tfbar button").forEach(b =>
+    b.onclick = () => { timeframe = b.dataset.tf; syncUrl(); load(); });
+}
+
+function momentumRow(m) {
+  const tip = info(GLOSSARY.momentum);
+  if (!m) {
+    return `<div class="mom"><span><b>Momentum</b>${tip}</span>
+      <span class="v">not available — needs 252 sessions of history</span></div>`;
+  }
+  return `<div class="mom">
+    <span><b>Momentum (12-1)</b>${tip}</span>
+    <span class="v">rank <strong>${m.rank}</strong> of ${m.of}</span>
+    <span class="v">${Math.round(m.percentile)}th percentile</span>
+    <span class="v">trailing return ${m.score >= 0 ? "+" : ""}${m.score.toFixed(1)}%</span>
+  </div>`;
+}
+
+/** The session's own high and low, with the last price marked between them.
+ *
+ * Distinct from the "Range position" indicator, which spans 252 sessions. This
+ * is one day, and the date comes from the quote's last-trade time so it never
+ * claims to be today when the market has been shut since Friday.
+ */
+function dayRange(q) {
+  const low = Number(q.low), high = Number(q.high), ltp = Number(q.ltp);
+  if (!isFinite(low) || !isFinite(high) || high <= low) return "";
+
+  const day = String(q.ltt || "").split(" ")[0] || "session";
+  const parts = [];
+  if (isFinite(Number(q.open))) parts.push(`open ${rupee(q.open)}`);
+  if (isFinite(Number(q.previous_close))) {
+    parts.push(`prev close ${rupee(q.previous_close)}`);
+  }
+
+  // Clamped because a stale cached quote can sit outside the range it was
+  // fetched with, and a marker off the end of the track reads as a rendering bug.
+  const pct = isFinite(ltp)
+    ? Math.max(0, Math.min(100, (ltp - low) / (high - low) * 100))
+    : null;
+
+  return `<div class="dayrange">
+    <div class="dayhead">
+      <span class="daylabel">${esc(day)}${info(
+        "The high and low of this trading session only. The Range position "
+        + "indicator below spans 252 sessions instead, so the two differ.")}</span>
+      <span class="daymeta">${parts.join(" &middot; ")}</span>
+    </div>
+    <div class="dayband">
+      <span class="dayend">${rupee(low)}</span>
+      <span class="daytrack">${pct == null ? ""
+        : `<span class="daymark" style="left:${pct.toFixed(1)}%"></span>`}</span>
+      <span class="dayend">${rupee(high)}</span>
+    </div>
+  </div>`;
+}
+// A circuit-band track was built here and removed. Breeze's lower_circuit and
+// upper_circuit are not the exchange's daily limits -- measured on two symbols they
+// are exactly LTP x 0.9 and LTP x 1.1, recomputed on every quote. A real circuit
+// limit is fixed off the previous close for the whole session, so a band derived
+// from the live price is not a ceiling: it would have shown "10.0% to upper" and a
+// marker at the midpoint permanently, whatever the price did.
+
+function card(sym) {
+  if (sym.error) {
+    return `<div class="card"><div class="top"><span class="code">${esc(sym.code)}</span>
+      <span class="label">${esc(sym.label)}</span></div>
+      <div class="err">Could not load this symbol — ${esc(sym.error)}</div></div>`;
+  }
+  const q = sym.quote || {}, r = sym.readout;
+  const chg = q.change_pct;
+  const chgCls = chg > 0 ? "up" : chg < 0 ? "down" : "";
+  const arrow = chg > 0 ? "▲" : chg < 0 ? "▼" : "▬";
+
+  const rows = r.indicators.map(i => `<tr>
+      <td>${esc(i.name)}${info(GLOSSARY.indicator[i.name])}</td>
+      <td class="val">${esc(i.display)}</td>
+      <td class="note">${esc(i.note)}</td>
+    </tr>`).join("");
+
+  return `<div class="card">
+    <div class="top">
+      <span class="code">${esc(sym.code)}</span>
+      <span class="label">${esc(sym.label)}</span>
+      <span class="price">${rupee(q.ltp)}
+        <span class="chg ${chgCls}">${arrow} ${chg == null ? "—" : Number(chg).toFixed(2) + "%"}</span>
+      </span>
+    </div>
+    <div class="state">
+      ${stateBadge(r.state)}
+      <span class="meta">data ${esc(r.data_confidence)}${info(GLOSSARY.data[r.data_confidence])}
+        &middot; ${r.bars} bars &middot; ${LABELS[sym.timeframe] || sym.timeframe}</span>
+    </div>
+    ${dayRange(q)}
+    ${momentumRow(r.momentum)}
+    <table>
+      <thead><tr><th>Indicator</th><th class="val">Value</th><th>Reading</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    ${r.caveats.map(c => `<div class="caveat">${esc(c)}</div>`).join("")}
+  </div>`;
+}
+
+let sessionErrorHandled = false;
+
+async function load() {
+  try {
+    const res = await fetch(`/api/snapshot?timeframe=${encodeURIComponent(timeframe)}`);
+    if (res.status === 503) {
+      const e = await res.json();
+      document.getElementById("banner").textContent = "Session unavailable";
+      document.getElementById("cards").innerHTML =
+        `<div class="card"><div class="err"><b>${esc(e.detail)}</b></div></div>`;
+      // Mirror of the case below: a green dot beside "Session unavailable" is
+      // the same lie inverted. Flag it degraded so recovery restores it.
+      sessionErrorHandled = true;
+      document.getElementById("sessTabDot").className = "tabdot bad";
+      document.getElementById("sessDot").className = "dot bad";
+      return;
+    }
+    const data = await res.json();
+    GLOSSARY = data.glossary || GLOSSARY;
+    renderTfbar(data.timeframes);
+
+    const notice = document.getElementById("notice");
+    if (data.session_error) {
+      notice.className = "notice bad";
+      notice.textContent = data.session_error;
+      document.getElementById("sessTabDot").className = "tabdot bad";
+      document.getElementById("sessDot").className = "dot bad";
+      document.getElementById("sessText").textContent =
+        "Session expired — enter today's session ID below.";
+      // Switch once, not on every 15s poll, so it cannot fight the user.
+      if (!sessionErrorHandled) { sessionErrorHandled = true; showTab("session"); }
+    } else {
+      notice.className = "notice";
+      // This poll may only *degrade* the session dot; loadSession owns the
+      // healthy state. Without restoring it here a single transient error left
+      // the dot red until the 60s session poll, so pasting a valid session ID
+      // appeared to do nothing.
+      const wasDegraded = sessionErrorHandled;
+      sessionErrorHandled = false;
+      if (wasDegraded) loadSession();
+      const first = data.symbols.find(s => s.readout);
+      notice.textContent = first ? first.readout.not_advice : "";
+    }
+
+    const b = document.getElementById("banner");
+    const streaming = data.feed && data.feed.connected
+                      && data.symbols.some(s => s.live);
+    const text = data.market.reason
+      + (data.market.last_trade ? ` · last trade ${data.market.last_trade}` : "")
+      + (streaming ? ` · ${data.feed.ticks} ticks` : "");
+    // Badge only when ticks are genuinely arriving, not merely "connected".
+    b.innerHTML = (streaming
+      ? `<span class="livepill"><span class="livedot"></span>LIVE</span>` : "")
+      + esc(text);
+    b.className = "banner" + (data.market.open ? " open" : "");
+
+    document.getElementById("cards").innerHTML = data.symbols.map(card).join("");
+    document.getElementById("foot").innerHTML =
+      `Refreshed ${esc(data.market.as_of)}. This page polls the local server, not Breeze.`;
+  } catch (err) {
+    document.getElementById("banner").textContent = "Cannot reach the local server — is uvicorn running?";
+  }
+}
+
+// Nothing is fetched until the gate is cleared. Credentials are armed from this
+// browser's stored keys first, so a restarted server picks them up silently.
+/** Everything a working session unblocks, in dependency order.
+ *
+ * Shared by boot and by saving a session ID, because keeping two lists in step by
+ * hand is what broke: the save path refreshed only the session and the snapshot, so
+ * the watchlist chips and the alert symbol picker — populated by loadWatchlist,
+ * which has no timer of its own — stayed empty until a manual reload.
+ */
+async function refreshAll() {
+  await loadSession();
+  await loadWatchlist();       // fills WATCHED, used by the chips and alert picker
+  loadAlerts();                // its picker reads WATCHED, so after the watchlist
+  loadIpos();                  // independent of Breeze, but on a 30-minute timer
+  await load();
+}
+
+async function bootApp() {
+  if (BOOTED) return;
+  BOOTED = true;
+  showTab(activeTab);
+  await armCredentials();
+  await loadAccount({ autoOpen: !REQUIRE_LOGIN });
+  // After credentials, so a restore can be checked against the App Key that
+  // minted the session; before loadSession, so the panel shows the restored one.
+  await syncSession();
+  await refreshAll();
+  setInterval(() => { if (appVisible()) load(); }, 3000);
+  setInterval(() => { if (appVisible()) loadSession(); }, 60000);
+  setInterval(() => { if (appVisible()) loadAlerts(); }, 5000);
+  setInterval(() => { if (appVisible()) loadIpos(); }, 30 * 60 * 1000);
+}
+
+(async () => {
+  setView("loading", "Checking sign-in…");
+
+  let cfg;
+  try {
+    cfg = await (await fetch("/api/config")).json();
+  } catch {
+    setView("loading", "Cannot reach the local server — is uvicorn running?");
+    return;
+  }
+  REQUIRE_LOGIN = !!cfg.require_login;
+
+  if (!REQUIRE_LOGIN) {
+    setView("loading", "Loading market data…");
+    await bootApp();
+    setView("app");
+    initFirebase(cfg);           // sync still available, just not required
+    return;
+  }
+
+  if (!cfg.enabled) {
+    setView("gate");
+    gateMsg("Sign-in is required but Firebase is not configured. Add "
+            + "firebase-web-config.json, or set REQUIRE_LOGIN = False in "
+            + "app_config.py to run without sign-in.", "bad");
+    return;
+  }
+
+  // Hold the splash until Firebase reports whether a session already exists,
+  // otherwise an already-signed-in user sees the sign-in prompt flash first.
+  // But never hang on it: if auth does not report (slow network, storage
+  // blocked), fall back to the sign-in screen so the user can still act.
+  setTimeout(() => {
+    if (!AUTH_REPORTED && REQUIRE_LOGIN) {
+      setView("gate");
+      gateMsg("Firebase did not report a sign-in state. Sign in to continue.");
+    }
+  }, AUTH_TIMEOUT_MS);
+  await initFirebase(cfg);
+})();
+</script>
+</body>
+</html>
