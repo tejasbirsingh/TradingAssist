@@ -1,0 +1,20 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Credentials — never commit
+.env
+*.session
+
+# Firebase web config. Not a secret (access is controlled by Firestore rules),
+# but kept out of git by default so a project isn't published unintentionally.
+# Safe to force-add if you want to share one project across your own machines.
+firebase-web-config.json
+
+# Session key, cached candles and harvests: all derived or secret.
+data/
+
+# breeze-connect writes these into the working directory on import,
+# and they can contain request payloads. Never commit them.
+logs/
