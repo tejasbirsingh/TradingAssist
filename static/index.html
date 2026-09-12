@@ -322,6 +322,17 @@
   }
   .chip button:hover { border-color: #8b2a26; color: var(--down); background: #2a1211; }
   .chips .empty { color: var(--muted); font-size: 13px; }
+  .empty-state h3 { margin: 0 0 10px; font-size: 15px; }
+  .empty-state p { margin: 0 0 10px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+  .empty-state ul { margin: 0 0 12px; padding-left: 20px; color: var(--muted); font-size: 13px; line-height: 1.7; }
+  .empty-state code {
+    background: #1b1f28; border: 1px solid var(--line); border-radius: 4px;
+    padding: 1px 5px; font-size: 12px;
+  }
+  .empty-state .empty-note {
+    margin: 0; padding-top: 11px; border-top: 1px solid var(--line);
+    font-size: 12.5px;
+  }
 
   .results { display: flex; flex-direction: column; gap: 5px; margin-top: 11px; }
   .result {
@@ -921,7 +932,13 @@ function makeRevealable(input) {
     btn.title = btn.getAttribute("aria-label");
   };
 
-  btn.addEventListener("click", () => {
+  btn.addEventListener("click", ev => {
+    // Must not reach the document's outside-click handler. sync() replaces this
+    // button's inner SVG, which is what was clicked, so by the time the event
+    // bubbles up ev.target is detached from the DOM and .acctwrap.contains(it) is
+    // false -- the account panel treated its own eye button as a click outside
+    // itself and closed.
+    ev.stopPropagation();
     input.type = input.type === "password" ? "text" : "password";
     sync();
     input.focus();
@@ -976,6 +993,79 @@ document.getElementById("gateSignIn").addEventListener("click", async () => {
 const FB_SDK = "https://www.gstatic.com/firebasejs/11.0.2";
 let FB = null;          // { auth, db, fns } once initialised
 let FB_USER = null;
+
+// Attach the Firebase ID token to our own API calls, once, rather than editing
+// twenty fetch sites. Only same-origin requests are touched: the Firebase SDK
+// fetches its own modules and endpoints through this same function, and sending
+// our Authorization header to Google would be both useless and careless.
+//
+// getIdToken() is called per request on purpose. Tokens expire after an hour and
+// the SDK refreshes them transparently, so caching one here would start failing
+// silently 60 minutes after sign-in.
+const rawFetch = window.fetch.bind(window);
+
+/** Same origin, decided by the URL parser rather than by string prefixes.
+ *
+ * A startsWith() test leaks the token. All four of these pass a prefix check and
+ * resolve to an attacker's host — verified against the WHATWG parser:
+ *
+ *   //evil.com/x                     startsWith("/") is true, but it is
+ *                                    protocol-relative and resolves to evil.com
+ *   https://ourhost.evil.com/x       no boundary after the origin
+ *   https://ourhost@evil.com/x       "ourhost" is userinfo, not the host
+ *   /\evil.com/x                     backslash normalises to a slash
+ *
+ * Comparing the parsed .origin has no such edge cases. A bad URL throws, and a URL
+ * we cannot parse is one we must not attach a credential to.
+ */
+function isSameOrigin(url) {
+  try {
+    return new URL(url, location.href).origin === location.origin;
+  } catch {
+    return false;
+  }
+}
+
+// Shown once, not per request: with a 3-second poll a refused token would
+// otherwise rewrite the message several times a second.
+let DENIED = false;
+
+/** A 401 while signed in means the server verified the token and said no.
+ *
+ * Every fetch site reports a failure as "cannot reach the server", which is the
+ * wrong diagnosis here and hides the one-line fix. The server cannot say which
+ * account it wants -- that would tell an anonymous caller who is allowed in -- so
+ * the browser names the account it actually sent.
+ */
+function refusedByServer() {
+  if (DENIED) return;
+  DENIED = true;
+  const who = (FB_USER && FB_USER.email) || "That account";
+  setView("gate");
+  gateMsg(`${who} is signed in with Google, but the server has not been told to `
+          + "allow it. Add the address to the ALLOWED_EMAILS setting and "
+          + "redeploy. To get in meanwhile, sign out of Google or use a private "
+          + "window: the app then asks for the username and password instead.",
+          "bad");
+}
+
+window.fetch = async (input, init = {}) => {
+  const url = typeof input === "string" ? input : (input && input.url) || "";
+  if (!isSameOrigin(url) || !FB_USER
+      || (init.headers && new Headers(init.headers).has("Authorization"))) {
+    return rawFetch(input, init);
+  }
+  try {
+    const token = await FB_USER.getIdToken();
+    const headers = new Headers(init.headers || {});
+    headers.set("Authorization", `Bearer ${token}`);
+    const res = await rawFetch(input, { ...init, headers });
+    if (res.status === 401) refusedByServer();
+    return res;
+  } catch {
+    return rawFetch(input, init);   // unsigned beats not sending the request
+  }
+};
 let AUTH_REPORTED = false;
 
 function fbMsg(text, cls = "") {
@@ -1715,6 +1805,31 @@ function dayRange(q) {
 // from the live price is not a ceiling: it would have shown "10.0% to upper" and a
 // marker at the midpoint permanently, whatever the price did.
 
+/** Onboarding panel shown when nothing is being tracked yet.
+ *
+ * The Breeze-code point is the one that actually trips people up: searching for
+ * "Reliance" is required because the API wants RELIND, not the RELIANCE ticker you
+ * would type into a chart.
+ */
+function emptyWatchlist() {
+  return `<div class="card empty-state">
+    <h3>No stocks yet</h3>
+    <p>Use <b>Search by company name or code</b> in the Watchlist box above, then
+       click a result to start tracking it.</p>
+    <ul>
+      <li>Search by <b>company name</b> — the API uses Breeze codes rather than the
+          tickers you see on a chart, so Reliance is <code>RELIND</code> and Dhoot
+          Transmission is <code>DHOTRA</code>.</li>
+      <li>Each stock you add gets a card here with its price, the session's high and
+          low, and RSI, moving-average and volume readings.</li>
+      <li>Searching works before you enter a Breeze session; live prices need one.</li>
+    </ul>
+    <p class="empty-note">This dashboard describes what price is doing. It does not
+       tell you what to buy — buy and sell rules built from these indicators showed
+       no out-of-sample edge when tested over 18 years.</p>
+  </div>`;
+}
+
 function card(sym) {
   if (sym.error) {
     return `<div class="card"><div class="top"><span class="code">${esc(sym.code)}</span>
@@ -1811,7 +1926,11 @@ async function load() {
       + esc(text);
     b.className = "banner" + (data.market.open ? " open" : "");
 
-    document.getElementById("cards").innerHTML = data.symbols.map(card).join("");
+    // An empty map() renders an empty string, which reads as a broken page rather
+    // than as "nothing here yet".
+    document.getElementById("cards").innerHTML = data.symbols.length
+      ? data.symbols.map(card).join("")
+      : emptyWatchlist();
     document.getElementById("foot").innerHTML =
       `Refreshed ${esc(data.market.as_of)}. This page polls the local server, not Breeze.`;
   } catch (err) {
