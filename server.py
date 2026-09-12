@@ -119,6 +119,11 @@ def _watch_alerts():
 
 @asynccontextmanager
 async def lifespan(app):
+    # Printed rather than raised: a misconfigured gate must not stop the service,
+    # but it must not be silent either. On Render this is the deploy log.
+    warning = auth.gate_warning(project_id=(firebase_config.load() or {}).get("projectId"))
+    if warning:
+        print(f"AUTH WARNING: {warning}", flush=True)
     thread = threading.Thread(target=_watch_alerts, daemon=True)
     thread.start()
     yield
@@ -137,11 +142,16 @@ async def require_password(request, call_next):
     later is covered by default. Inactive with no password configured, which
     leaves loopback use unchanged.
     """
-    if not auth.permits(request.url.path, request.headers.get("authorization")):
-        return JSONResponse(
-            status_code=401,
-            content={"detail": "Authentication required."},
-            headers={"WWW-Authenticate": 'Basic realm="Trading Assist"'})
+    config = firebase_config.load() or {}
+    if not auth.permits(request.url.path, request.headers.get("authorization"),
+                        project_id=config.get("projectId")):
+        # Only offer the browser's native password dialog when a password is what
+        # would actually satisfy the gate. Sending it under a token-only gate would
+        # prompt for credentials that cannot work.
+        headers = ({"WWW-Authenticate": 'Basic realm="Trading Assist"'}
+                   if auth.configured() else {})
+        return JSONResponse(status_code=401, headers=headers,
+                            content={"detail": "Authentication required."})
     return await call_next(request)
 
 

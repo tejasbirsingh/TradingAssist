@@ -1,17 +1,21 @@
-"""App configuration. Edit WATCHLIST to track different symbols.
+"""App configuration.
 
-``code`` must be the Breeze ShortName from the security master, which is NOT
-the chart ticker: Dhoot Transmission trades as DHOOTTRANS but the API wants
-DHOTRA.
+The watchlist is managed from the UI and stored in ``data/watchlist.json``.
+``WATCHLIST`` below is only the seed for a first run and is intentionally empty.
+
+Any ``code`` used here or by the UI is the Breeze ShortName from the security
+master, which is NOT the chart ticker: Reliance trades as RELIANCE but the API
+wants RELIND, and Dhoot Transmission is DHOTRA rather than DHOOTTRANS.
 """
 
 import os
 
-WATCHLIST = [
-    {"code": "DHOTRA", "label": "Dhoot Transmission"},
-    {"code": "SBIFUN", "label": "SBI Funds Management"},
-    {"code": "RELIND", "label": "Reliance Industries"},
-]
+# Deliberately empty. This is only the seed used when data/watchlist.json does not
+# exist yet, so anything here is what a brand-new install -- or a host with an
+# ephemeral disk, where the file is wiped on every restart -- silently shows as
+# "your" watchlist. Hardcoding names meant a deployed instance kept resurrecting
+# stocks that had been removed. A new user starts empty and is told how to add.
+WATCHLIST = []
 
 EXCHANGE_CODE = "NSE"
 PRODUCT_TYPE = "cash"

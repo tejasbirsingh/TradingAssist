@@ -231,6 +231,48 @@ explains the stale/spent case rather than echoing Breeze's misleading message.
 within 0.25s of a save). Both paths write through `breeze_client.store_session`,
 so they cannot produce different files.
 
+### Saving a session used to need a manual reload
+
+Every tab refreshes itself when a session is saved — `refreshAll()` in
+`static/index.html`, the same list boot uses. That was not enough, and the reason
+was on the server, which is why reloading the page appeared to be the cure: it
+was not, the elapsed time was.
+
+`POST /api/session` drops the memoised client so the next call picks up the new
+key. Rebuilding it was expensive in two ways that only a rebuild paid, both
+measured on this machine:
+
+| Cost on the first snapshot after a save | Before | After |
+|---|---|---|
+| `load_client()` — security-master download | 1.5s answering, **124.5s** not | **0.001s** |
+| First snapshot end to end, cold process | **49.6s** | **0.416s** |
+
+1. **`load_client()` called `get_stock_script_list()`.** The SDK downloads
+   `SecurityMaster.zip` from `directlink.icicidirect.com` **twice** — once through
+   `urlopen` with no timeout argument at all, once through `requests` whose
+   response it then discards — and on failure *prints* rather than raises. Timed
+   here at 1.5s when the CDN answered and 124.5s when it did not. It ran inside
+   `GET /api/snapshot`. In `logs/apiLogs.log` for 8 Sep the session was saved at
+   20:19:58 and the next Breeze call is at 20:20:36 — 38 seconds in which the
+   server made no request at all. Nothing on the REST path reads those
+   dictionaries; only the tick socket does, so `livefeed.load_symbol_map()` now
+   loads them on the feed's own background thread, once per client, with a
+   45-second ceiling so a hung download cannot leave the feed reporting
+   `starting` for the life of the process.
+2. **`market_data.client()` had no lock.** Endpoints are `sync def`, so FastAPI
+   runs them on a threadpool: with the page polling every three seconds, every
+   request that arrived during a rebuild started a rebuild of its own — ten
+   concurrent downloads, all contending. It is now single-flight, and a *failed*
+   build is still not memoised, so a session that starts working is picked up at
+   once.
+
+Profiling the cold path then showed a third stall with the same symptom:
+`_retry` slept `attempts × pause` per symbol on a **missing session**, which is
+not transient. The momentum ranking asks for 40 symbols, so 28 pointless sleeps
+came to 16.9 of the first snapshot's 18.1 seconds. Session failures now raise
+immediately; genuinely transient ones (Breeze returning a non-JSON body) still
+retry.
+
 ### Endpoints
 
 | Endpoint | Purpose |
@@ -461,6 +503,136 @@ set the gate is inactive, which is why local loopback use is unchanged.
 `/api/config` stays open because Render pings it as the health check; it returns
 local config only, and the Firebase web `apiKey` in it is a public project
 identifier, not a secret.
+
+### Firebase ID tokens as a second credential
+
+`firebase_auth.py` verifies a Firebase ID token server-side, so Google sign-in can
+become a real gate rather than a UI decoration. `auth.permits()` accepts **either**
+credential, which is what lets the token be introduced without invalidating the
+password a live deployment already depends on.
+
+| env | effect |
+|---|---|
+| `AUTH_PASSWORD` | HTTP Basic accepted |
+| `REQUIRE_FIREBASE_AUTH=true` **and** a `projectId` **and** `ALLOWED_EMAILS` | verified Bearer token accepted, for those addresses only |
+| neither | gate inactive — loopback development |
+
+Deliberately **not** inferred from `firebase-web-config.json` existing: that file is
+on a development machine, and inferring from it would have started demanding tokens
+on localhost the moment this shipped.
+
+Tokens are verified locally against Google's x509 certificates rather than by calling
+an API per request — no added latency, and no dependency on Google being reachable
+while serving. Google rotates signing keys roughly daily, so an unknown `kid`
+triggers one refetch; without it every user is locked out for the rest of the cache
+window on each rotation. **Every failure path denies**, including a key-fetch failure:
+unavailable is not the same as allowed.
+
+`aud` and `iss` are both pinned to the project, because anyone can create a Firebase
+project and sign perfectly valid tokens in it — a signature proves only that *Google*
+issued the token, not that it was issued for us.
+
+### Two defects an adversarial review found in this code
+
+**The browser leaked the token cross-origin.** The `window.fetch` wrapper attaches
+the ID token to same-origin requests, and the original test was
+`url.startsWith("/") || url.startsWith(location.origin)`. Four URLs pass that and
+resolve to an attacker's host:
+
+```
+//evil.example.com/x                        protocol-relative
+https://ourhost.evil.com/x                  no boundary after the origin
+https://ourhost@evil.example.com/x          "ourhost" is userinfo, not the host
+/\evil.example.com/x                        backslash normalises to a slash
+```
+
+Now decided by `new URL(url, location.href).origin === location.origin`. Never gate a
+credential on a string prefix.
+
+**A non-ASCII Basic header returned an unauthenticated HTTP 500.**
+`secrets.compare_digest` raises `TypeError` on non-ASCII `str`, uncaught, so
+`Authorization: Basic <base64 of "usér:pass">` produced a traceback from inside the
+gate. Compared as UTF-8 bytes now, which also makes a non-ASCII password genuinely
+usable rather than merely safe.
+
+What the review could **not** break: path-normalisation bypasses (`//api/alerts`,
+`/API/alerts`, `/static/..%2f..%2fapi/alerts`, `/api/config/../alerts` — all 401),
+`alg=none`, RS256→HS256 confusion using the public key as the HMAC secret, and
+downgrade between the two mechanisms.
+
+### Signing in is not the same as being allowed in
+
+A Firebase project with the Google provider enabled accepts **any** Google account —
+that is what the provider is for. So a verified token proves only that Google issued
+it for this project, never that its owner is welcome, and `REQUIRE_FIREBASE_AUTH` on
+its own is a *weaker* boundary than the password: it swaps one shared secret for
+"anyone with a Gmail address".
+
+**`ALLOWED_EMAILS`** is what closes it. Comma, semicolon or space separated,
+case-insensitive, matched against the token's `email` claim:
+
+```
+ALLOWED_EMAILS=you@gmail.com, someone.else@gmail.com
+```
+
+Two properties worth stating, both pinned by tests:
+
+- **Unset means nobody, not everybody.** Forgetting the list would otherwise be
+  indistinguishable from publishing the app, so an empty list refuses every token
+  and the server prints `AUTH WARNING:` at startup saying so.
+- **An unverified address is refused.** An unverified `email` claim is an assertion,
+  not a fact, so it cannot be matched against a list. Google sign-in always reports a
+  verified one.
+
+Measured behaviour of each configuration, over HTTP:
+
+| `AUTH_PASSWORD` | `REQUIRE_FIREBASE_AUTH` | `ALLOWED_EMAILS` | `/api/config` | any other path |
+|---|---|---|---|---|
+| — | — | — | 200 | **200 — fully public**, plus a startup warning |
+| set | — | — | 200 | 401 without Basic |
+| — | on | set | 200 | 401 without an allowlisted token |
+| — | on | empty | 200 | 401 always, plus a startup warning |
+
+Forged tokens (`alg=none` carrying an allowlisted address, a signature-less RS256
+header) are refused in every configuration.
+
+**Both gates on at once is the safe transition, with one catch.** While signed in,
+the browser's fetch wrapper *replaces* the `Authorization` header with the Bearer
+token, so a signed-in-but-not-allowlisted account gets 401s even though the password
+would have worked. The page now says exactly that instead of "cannot reach the
+server". The way back in is to sign out of Google or open a private window: with no
+token to send, the Basic prompt returns.
+
+### Where the gate is enforced, and the one thing that must stay open
+
+`server.py` registers `require_password` as **middleware**, not as a per-route
+dependency, so a route added later is covered without anyone remembering to
+annotate it. Probed with the token gate on, all 24 routes plus `/api/docs`, an
+unknown path, and four traversal attempts return `401`:
+
+```
+200  84862B  GET /                                     <- the page
+200  84862B  GET /static/index.html
+200    237B  GET /api/config
+401          GET /api/session/key    /api/watchlist    /api/snapshot   /api/health
+401          POST /api/credentials   DELETE /api/credentials   PUT /api/watchlist
+401          GET /api/docs           /nonexistent      /staticky/index.html
+401          GET /static/../api/session/key            //api/watchlist
+401          GET /static/..%2f..%2fapi%2fsession%2fkey /static/./../api/watchlist
+```
+
+**The app shell has to be open, and that is not a compromise.** Gating `/` under a
+token-only deployment is a permanent lockout rather than a prompt: the page is what
+loads the Firebase SDK, so with no page there is no sign-in, no token, and no way to
+acquire one — and with `AUTH_PASSWORD` deleted the 401 carries no
+`WWW-Authenticate`, so the browser cannot even ask. `index.html` is already public
+on GitHub and holds no data; every value it displays arrives from a gated `/api/`
+route.
+
+`auth.open_path()` normalises with `posixpath.normpath` before matching the
+`/static/` prefix, because ASGI hands over an already-percent-decoded path — without
+that, `/static/..%2f..%2fapi/session/key` arrives as `/static/../../api/session/key`,
+matches the prefix, and walks straight out of the shell.
 
 ### Settings that matter
 
@@ -864,3 +1036,11 @@ bare `import config` internally, so a top-level `config.py` shadows it and break
   `auth/unauthorized-domain`. Treat both paths as unproven.
 - The backtest universe has survivorship bias (above). Any future signal work
   needs point-in-time constituents from another data source.
+- **Breeze's REST calls have no timeout.** The SDK calls
+  `requests.get(url, data=..., headers=...)` with none, so a network stall is
+  bounded only by the OS — `logs/apiLogs.log` is full of connect timeouts to
+  `api.icicidirect.com`. A snapshot can therefore still block for a long time on
+  a bad connection, and there is no clean fix from outside the SDK:
+  `socket.setdefaulttimeout` is global and would also break the long-lived tick
+  socket. The three stalls documented under *Session* were all removable; this
+  one is not.

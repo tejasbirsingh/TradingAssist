@@ -74,6 +74,15 @@ def load_client():
 
     Deliberately does NOT call ``generate_session``: that would try to
     re-exchange an already-spent apisession and fail.
+
+    Nor does it call ``get_stock_script_list``, which ``generate_session`` does.
+    That method downloads SecurityMaster.zip twice -- once through ``urlopen``
+    with no timeout at all, once through ``requests`` whose response it discards
+    -- and swallows the failure. Measured at 1.5s when the CDN answers and 124.5s
+    when it does not. Since this runs inside a request and saving a session drops
+    the memoised client, that download was the whole reason the stocks tab needed
+    a manual reload afterwards. Nothing on the REST path reads those dictionaries;
+    only the tick socket does, and livefeed loads them on its own thread.
     """
     api_key, secret_key = _credentials()
 
@@ -95,7 +104,6 @@ def load_client():
     breeze.user_id = user_id
     breeze.session_key = session_key
     breeze.secret_key = secret_key
-    breeze.get_stock_script_list()
     breeze.api_handler = ApificationBreeze(breeze)
     return breeze
 

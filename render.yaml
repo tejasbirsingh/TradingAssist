@@ -53,6 +53,16 @@ services:
       - key: AUTH_PASSWORD
         sync: false
 
+      # Google sign-in as the second accepted credential, so AUTH_PASSWORD can
+      # eventually be deleted. Both are needed: the flag alone would accept ANY
+      # Google account, because that is what the Firebase Google provider does.
+      # ALLOWED_EMAILS is sync:false to keep the address out of a public repo, not
+      # because it is secret -- so it has to be typed into the dashboard.
+      - key: REQUIRE_FIREBASE_AUTH
+        value: "true"
+      - key: ALLOWED_EMAILS
+        sync: false
+
       # Telegram is the only off-device channel that works here: the free tier
       # blocks outbound ports 25/465/587, so every SMTP_* setting is inert and
       # email cannot connect at all.
@@ -61,13 +71,16 @@ services:
       - key: TELEGRAM_CHAT_ID
         sync: false
 
-      # firebase-web-config.json is gitignored and firebase_config.py reads it
-      # from disk only, so Firebase is unconfigured on Render. With the default
-      # REQUIRE_LOGIN=true the page renders a dead "sign-in required but Firebase
-      # is not configured" gate while the deploy still reports healthy. auth.py's
-      # HTTP Basic gate is the real security boundary here anyway.
+      # firebase-web-config.json is gitignored, so this was "false" while Render
+      # had no Firebase config to serve and the page would otherwise have rendered
+      # a dead "sign-in required but Firebase is not configured" gate. The file was
+      # since uploaded to the repo by hand, so /api/config now publishes it (the
+      # web apiKey is a public project identifier) and sign-in can be required.
+      #
+      # This governs the *browser* only. ALLOWED_EMAILS above is what makes it a
+      # boundary rather than a curtain.
       - key: REQUIRE_LOGIN
-        value: "false"
+        value: "true"
 
       # alerts.py stamps triggered_at with a naive datetime.now(). On a UTC host
       # those stamps would sit 5h30m behind the IST times shown everywhere else,

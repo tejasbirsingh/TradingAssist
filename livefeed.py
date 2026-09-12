@@ -24,6 +24,16 @@ FRESH_SECONDS = 60          # a tick older than this is treated as absent
 CONNECT_RETRIES = 4
 RETRY_PAUSE = 6.0
 
+# Ceiling on the security-master download. The SDK fetches SecurityMaster.zip
+# twice -- once through urlopen with no timeout argument at all, so it is bounded
+# only by the OS -- and prints rather than raises on failure. Measured at 1.5s
+# when the CDN answers and 124.5s when it does not. Waiting on it unbounded would
+# leave the feed reporting "starting" for the rest of the process's life.
+SYMBOL_MAP_TIMEOUT = 45.0
+
+NO_SYMBOL_MAP = ("Breeze's security master did not load, so ticks cannot be "
+                 "matched to stock codes.")
+
 # Nobody polls the server while the dashboard is closed, so silence on the
 # request path means nobody is watching and the socket can be dropped. Comfortably
 # longer than the page's 3-second poll, so a brief network stall does not tear a
@@ -76,6 +86,34 @@ def is_fresh(tick, now=None, max_age=FRESH_SECONDS):
     return ((time.time() if now is None else now) - tick["received_at"]) <= max_age
 
 
+def load_symbol_map(client, timeout=SYMBOL_MAP_TIMEOUT):
+    """Populate the SDK's token dictionaries. True once this client has them.
+
+    Only the socket needs them: ticks name their instrument by token and
+    ``subscribe_feeds`` looks the stock code up there, while the REST calls take a
+    stock code directly. Loaded once per client -- a rebuilt client starts with
+    empty dictionaries -- and on its own thread, so a stalled download is
+    abandoned rather than waited out.
+    """
+    if getattr(client, "_symbol_map_loaded", False):
+        return True
+
+    done = threading.Event()
+
+    def fetch():
+        try:
+            client.get_stock_script_list()
+            client._symbol_map_loaded = True
+        except Exception:
+            pass                  # the caller reports it; this thread must not die loudly
+        finally:
+            done.set()
+
+    threading.Thread(target=fetch, daemon=True).start()
+    done.wait(timeout)
+    return bool(getattr(client, "_symbol_map_loaded", False))
+
+
 class LiveFeed:
     """Holds the newest tick per stock code. The socket writes; requests read."""
 
@@ -126,6 +164,10 @@ class LiveFeed:
 
     def _connect_and_subscribe(self, client, codes):
         try:
+            # Before the socket, not after: subscribe_feeds resolves a stock code
+            # through these dictionaries, and handle_tick names a token from them.
+            if not load_symbol_map(client):
+                raise RuntimeError(NO_SYMBOL_MAP)
             client.on_ticks = self.handle_tick
             last_error = None
             for attempt in range(CONNECT_RETRIES):

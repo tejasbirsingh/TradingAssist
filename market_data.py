@@ -6,6 +6,7 @@ watchlist costs roughly 15 calls a day.
 """
 
 import json
+import threading
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -21,23 +22,34 @@ from signals import evaluate
 
 CACHE_DIR = Path(__file__).parent / "data" / "cache"
 _client = None
+# Endpoints are sync defs, so FastAPI runs them on a threadpool and several
+# snapshots can be in flight at once. Saving a session drops the memoised client
+# while the page is still polling every three seconds, so without this each of
+# those requests started a build of its own.
+_client_lock = threading.Lock()
 
 # Breeze stamps last-trade-time like '21-Aug-2026 15:57:49'.
 LTT_FORMAT = "%d-%b-%Y %H:%M:%S"
 
 
 def client():
-    """Memoised Breeze client. One session per process, reused from disk."""
+    """Memoised Breeze client. One session per process, reused from disk.
+
+    Built at most once even when several requests arrive together. A failed build
+    is not remembered, so a session that starts working is picked up immediately.
+    """
     global _client
-    if _client is None:
-        _client = load_client()
-    return _client
+    with _client_lock:
+        if _client is None:
+            _client = load_client()
+        return _client
 
 
 def reset_client():
     """Drop the memoised client so the next call picks up a new session key."""
     global _client
-    _client = None
+    with _client_lock:
+        _client = None
 
 
 def now_ist():
@@ -122,11 +134,18 @@ def _retry(fn, attempts=3, pause=0.6):
     ``.json()`` on it and raises "Expecting value: line 1 column 1 (char 0)".
     The next attempt normally succeeds, so a bare retry beats surfacing a
     broken row to the user.
+
+    A missing or expired session is not transient, and the cost is charged per
+    symbol: the momentum ranking asks for forty of them, so the first snapshot
+    after a restart spent 16.9 of its 18.1 seconds asleep in here waiting to fail
+    again. Those are raised straight away.
     """
     last = None
     for attempt in range(attempts):
         try:
             return fn()
+        except (SessionUnavailable, SessionExpired):
+            raise
         except Exception as exc:
             last = exc
             if attempt < attempts - 1 and pause:
